@@ -15,7 +15,17 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MODELS = ["gemma2:9b", "llama3:8b", "qwen2.5:7b", "phi3:mini"]
+MODELS = ["gemma2:9b", "llama3:8b", "qwen2.5:7b", "phi3:mini", "qwen3:8b"]
+
+# What a reasoning model sends in `message.thinking` before it answers.  It
+# arrives first, in its own field, and is the whole reason the app needs to
+# treat reasoning separately from the reply.
+THOUGHTS = [
+    "Let me work through what is actually being asked here. ",
+    "There are two readings of the question and they lead to different "
+    "answers, so I should pick the one that matches the context. ",
+    "Checking my reasoning: the second reading is the one that fits. ",
+]
 
 REPLIES = [
     "I think the key consideration is maintainability. A simpler design that "
@@ -56,8 +66,30 @@ class Handler(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(length) or b"{}")
         model = request.get("model", "unknown")
 
-        reply = random.choice(REPLIES)
-        words = reply.split(" ")
+        if self.path == "/api/pull":
+            self._pull(model)
+            return
+
+        # Replies vary in length, so a low num_predict genuinely truncates some
+        # of them — which is what makes the "stopped at the length cap" path
+        # testable without a GPU.
+        paragraphs = [random.choice(REPLIES)
+                      for _ in range(random.randint(1, 12))]
+        words = " ".join(paragraphs).split(" ")
+
+        cap = (request.get("options") or {}).get("num_predict")
+        truncated = isinstance(cap, int) and 0 < cap < len(words)
+        if truncated:
+            words = words[:cap]
+
+        # Ollama refuses `think` on a model that cannot reason, and the app is
+        # supposed to know the difference — so the mock refuses too.
+        think = request.get("think")
+        reasons = "qwen3" in model or "gpt-oss" in model
+        if think is not None and not reasons:
+            self._json({"error": f"{model} does not support thinking"}, 400)
+            return
+        thinking = bool(think) and reasons
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
@@ -65,24 +97,60 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         try:
+            if thinking:
+                for thought in THOUGHTS:
+                    for piece in thought.split(" "):
+                        self._chunk(json.dumps({
+                            "model": model,
+                            "message": {"role": "assistant",
+                                        "thinking": piece + " "},
+                            "done": False,
+                        }))
+                        time.sleep(0.01)
             for word in words:
                 self._chunk(json.dumps({
                     "model": model,
                     "message": {"role": "assistant", "content": word + " "},
                     "done": False,
                 }))
-                time.sleep(0.04)
+                time.sleep(0.01)
             self._chunk(json.dumps({
                 "model": model,
                 "message": {"role": "assistant", "content": ""},
                 "done": True,
+                "done_reason": "length" if truncated else "stop",
                 "eval_count": len(words),
                 "prompt_eval_count": 24,
-                "eval_duration": int(len(words) * 0.04 * 1e9),
+                "eval_duration": int(len(words) * 0.01 * 1e9),
             }))
             self.wfile.write(b"0\r\n\r\n")
         except (BrokenPipeError, ConnectionResetError):
             pass       # the client cancelled, which is the point of the test
+
+    def _pull(self, model: str) -> None:
+        """Two layers of NDJSON progress, the way Ollama sends it."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            self._chunk(json.dumps({"status": "pulling manifest"}))
+            for digest, size in (("sha256:aaa", 40_000_000),
+                                 ("sha256:bbb", 10_000_000)):
+                done = 0
+                while done < size:
+                    done = min(size, done + size // 5)
+                    self._chunk(json.dumps({
+                        "status": f"pulling {digest[7:19]}",
+                        "digest": digest, "total": size, "completed": done}))
+                    time.sleep(0.05)
+            self._chunk(json.dumps({"status": "verifying sha256 digest"}))
+            self._chunk(json.dumps({"status": "success"}))
+            self.wfile.write(b"0\r\n\r\n")
+            if model not in MODELS:
+                MODELS.append(model)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _chunk(self, text: str) -> None:
         payload = (text + "\n").encode()

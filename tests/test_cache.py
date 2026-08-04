@@ -187,3 +187,37 @@ def test_similarity_and_normalise_helpers():
     assert normalise("  Hello   World ") == "hello world"
     assert similarity("copper pipe soldering", "soldering copper pipe") == 1.0
     assert similarity("copper pipe", "tax law") == 0.0
+
+
+# ------------------------------------------------- "0 minutes" = never expire
+
+def test_zero_minutes_means_never_for_durable_questions():
+    assert ttl_for("how to sweat a copper pipe", 0) is None
+
+
+def test_zero_minutes_still_expires_time_sensitive_questions():
+    """No setting should let the app serve last week's forecast."""
+    assert ttl_for("weather this weekend", 0) == 900
+
+
+def test_never_expiring_research_survives_a_year(tmp_path):
+    clock = Clock()
+    cache = ResearchCache(tmp_path / "c.json", base_ttl_minutes=0, clock=clock)
+    cache.put("how to wire a three way switch", "GUIDE")
+
+    clock.advance(365 * 24 * 3600)
+    assert cache.get("how to wire a three way switch") is not None
+
+
+def test_weather_still_goes_stale_when_set_to_never(tmp_path):
+    clock = Clock()
+    cache = ResearchCache(tmp_path / "c.json", base_ttl_minutes=0, clock=clock)
+    cache.put("weather tomorrow in pearl river", "FORECAST")
+
+    clock.advance(1200)                       # 20 minutes
+    assert cache.get("weather tomorrow in pearl river") is None
+
+
+def test_negative_and_junk_ttl_are_handled():
+    assert ttl_for("how to solder", -5) is None
+    assert ttl_for("how to solder", "banana") == 360 * 60

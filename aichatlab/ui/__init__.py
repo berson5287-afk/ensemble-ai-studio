@@ -1,4 +1,4 @@
-"""Tkinter front-end for AI Chat Lab."""
+"""Tkinter front-end for Ensemble AI Studio."""
 
 from .app import ChatLabApp, main
 

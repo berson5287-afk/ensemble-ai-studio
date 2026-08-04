@@ -41,6 +41,14 @@ class Lesson:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     source: str = ""
     uses: int = 0
+    # The project this was learned in, if any.  Lessons are keyword-matched
+    # against the question, and a question like "make some performance
+    # upgrades" matches equally well in every project the user has ever
+    # opened — so without this, work on one app arrives as advice about
+    # another, complete with its file paths.  A model handed
+    # "udbg/cache.py" as prior knowledge will cheerfully propose creating it
+    # in whatever folder is actually attached.
+    project: str = ""
 
     @property
     def haystack(self) -> str:
@@ -70,7 +78,9 @@ def parse_lessons(text: str) -> list[tuple[str, str]]:
     lessons: list[tuple[str, str]] = []
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
-        line = re.sub(r"^[-*•\d.)\s]+", "", line).strip()
+        # same care as the research parser: don't eat a leading number that is
+        # part of the lesson, e.g. "3D prints warp if the bed is cold"
+        line = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s+", "", line).strip()
         if not line or line.lower() in NONE_MARKERS:
             continue
         if line.lower().startswith("lessons"):
@@ -138,7 +148,8 @@ class KnowledgeBase:
             return False
 
     # -- writing -----------------------------------------------------------
-    def add(self, topic: str, text: str, source: str = "") -> Lesson | None:
+    def add(self, topic: str, text: str, source: str = "",
+            project: str = "") -> Lesson | None:
         """Store a lesson unless we already know something very like it."""
         text = (text or "").strip()
         if len(text) < 12 or is_volatile(text):
@@ -146,14 +157,16 @@ class KnowledgeBase:
         if self._duplicate(text):
             return None
         lesson = Lesson(topic=(topic or "General").strip()[:40],
-                        text=text[:MAX_LESSON_CHARS], source=source[:200])
+                        text=text[:MAX_LESSON_CHARS], source=source[:200],
+                        project=(project or "").strip()[:80])
         self.lessons.append(lesson)
         self.save()
         return lesson
 
     def add_many(self, pairs: Sequence[tuple[str, str]],
-                 source: str = "") -> list[Lesson]:
-        added = [self.add(topic, text, source) for topic, text in pairs]
+                 source: str = "", project: str = "") -> list[Lesson]:
+        added = [self.add(topic, text, source, project)
+                 for topic, text in pairs]
         return [lesson for lesson in added if lesson]
 
     def _duplicate(self, text: str) -> bool:
@@ -170,14 +183,27 @@ class KnowledgeBase:
         return False
 
     # -- reading -----------------------------------------------------------
-    def relevant(self, query: str, limit: int = MAX_INJECTED) -> list[Lesson]:
-        """Lessons whose wording overlaps the question, best first."""
+    def relevant(self, query: str, limit: int = MAX_INJECTED,
+                 project: str = "") -> list[Lesson]:
+        """Lessons whose wording overlaps the question, best first.
+
+        A lesson learned inside a project stays inside it.  "Make some
+        performance upgrades" is a question that matches every project the
+        user has ever opened, and a lesson carrying another app's file paths
+        does not become good advice by being relevant-sounding — it becomes
+        a model confidently proposing `udbg/cache.py` inside a folder that
+        has no `udbg` in it.  Lessons learned outside any project are
+        general and still apply everywhere.
+        """
         wanted = tokens(query)
         if not wanted or not self.lessons:
             return []
 
+        here = (project or "").strip()
         scored: list[tuple[float, Lesson]] = []
         for lesson in self.lessons:
+            if lesson.project and lesson.project != here:
+                continue
             available = tokens(lesson.haystack)
             if not available:
                 continue
@@ -194,9 +220,10 @@ class KnowledgeBase:
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [lesson for _score, lesson in scored[:limit]]
 
-    def recall(self, query: str, limit: int = MAX_INJECTED) -> list[Lesson]:
+    def recall(self, query: str, limit: int = MAX_INJECTED,
+               project: str = "") -> list[Lesson]:
         """Like `relevant`, but counts the retrieval against each lesson."""
-        found = self.relevant(query, limit)
+        found = self.relevant(query, limit, project)
         for lesson in found:
             lesson.uses += 1
         if found:

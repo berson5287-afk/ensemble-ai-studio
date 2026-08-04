@@ -18,7 +18,7 @@ from html.parser import HTMLParser
 
 import requests
 
-USER_AGENT = "AIChatLab/2.3.0 (+https://github.com/ai-chat-lab)"
+USER_AGENT = "AIChatLab/2.22.4 (+https://github.com/ai-chat-lab)"
 
 DEFAULT_MAX_RESULTS = 5
 DEFAULT_FETCH_PAGES = 2
@@ -278,6 +278,106 @@ def contextual_query(question: str, history: Sequence[dict] | None = None,
 
     subject = extract_subject(history)
     return f"{subject} {question}" if subject else question
+
+
+# ------------------------------------------------- "did you mean to search?"
+
+# Asking a model to "look up the latest X" with web research switched off is
+# the worst outcome the app can produce: it answers from training data, in the
+# same confident voice, and nothing anywhere says the search never happened.
+# These patterns are deliberately narrow — an explicit instruction to go and
+# look, or a question that is *only* answerable with live data.  Merely saying
+# "current" is not enough, because "my current project" is not a search.
+WEB_LOOKUP = re.compile(
+    r"("
+    r"look\s+(?:it|this|that|them|these|those)\s+up"
+    r"|look\s+up\b"
+    r"|look\s+(?:it\s+)?online"
+    r"|search\s+(?:the\s+)?(?:web|internet|online)"
+    r"|search\s+for\b"
+    r"|web\s+search"
+    r"|google\s+(?:it|this|that|them|for|the)\b"
+    r"|check\s+(?:the\s+)?(?:web|internet|online)"
+    r"|(?:on|from|off)\s+the\s+(?:web|internet)"
+    r"|browse\s+(?:the\s+)?(?:web|internet)"
+    r"|find\s+out\s+online"
+    r"|do\s+(?:some\s+)?research\s+(?:online|on\s+the\s+web|on\s+the\s+internet)"
+    r"|research\s+(?:this|it|that)\s+online"
+    r"|what'?s?\s+the\s+latest\b"
+    r"|latest\s+news\b"
+    r"|current\s+(?:price|prices|weather|score|scores|version|news|rate|rates|"
+    r"status|value|standings)"
+    r"|today'?s\s+(?:price|prices|weather|news|score|scores|rate|rates)"
+    r"|most\s+recent\s+(?:news|version|release|price|figures|data)"
+    r"|up[\s-]?to[\s-]?date\s+(?:info|information|data|figures?|numbers?|prices?)"
+    r")",
+    re.IGNORECASE)
+
+# "answer from memory", "no need to search" — an explicit opt-out beats a match
+NO_LOOKUP = re.compile(
+    r"\b(?:don'?t|do\s+not|no\s+need\s+to|without|never)\s+"
+    r"(?:bother\s+)?(?:to\s+)?"
+    r"(?:search|look\s+it\s+up|look\s+up|google|browse|go\s+online|"
+    r"check\s+online|use\s+the\s+(?:web|internet))",
+    re.IGNORECASE)
+
+
+# Questions whose answer moved on without telling the model.  Distinct from
+# `cache.VOLATILE`, which asks "how long may an answer be reused" — this asks
+# "would answering from training data be quietly wrong".
+STALE_RISK = re.compile(
+    r"\b("
+    r"newest|latest|most\s+recent|current(?:ly)?|right\s+now|"
+    r"this\s+(?:year|month|week)|nowadays|these\s+days|"
+    r"today|tonight|tomorrow|yesterday|"
+    r"who\s+is\s+the\s+(?:ceo|president|prime\s+minister|leader|owner)|"
+    r"how\s+much\s+(?:is|does|are|do)|price\s+of|cost\s+of|"
+    r"still\s+(?:available|supported|around|work)|"
+    r"released?\s+(?:yet|recently)|has\s+.{0,20}\s+released|"
+    r"version\s+of|up\s+to\s+date|out\s+yet|"
+    r"weather|forecast|stock\s+price|share\s+price|exchange\s+rate"
+    r")\b",
+    re.IGNORECASE)
+
+# Asked about the material in hand, not about the world.
+ABOUT_THE_MATERIAL = re.compile(
+    r"\b(this (?:code|file|folder|project|function|error|app)|"
+    r"my (?:code|file|folder|project|app)|the attached|above|"
+    r"you (?:said|wrote|suggested))\b",
+    re.IGNORECASE)
+
+
+def looks_time_sensitive(question: str) -> str:
+    """The phrase that makes a stale answer likely, or "".
+
+    `wants_web_search` catches someone *asking* for a lookup.  This catches
+    the more common and more dangerous case: a question that needs one and
+    does not say so.  "What is the 0-60 of the newest Audi R8" gets a
+    confident answer from training data, in the same voice as everything
+    else, and nothing anywhere says the model's newest and the world's newest
+    are different cars.
+    """
+    text = (question or "").strip()
+    if not text or NO_LOOKUP.search(text):
+        return ""
+    if ABOUT_THE_MATERIAL.search(text):
+        return ""          # about the attached code, not about the world
+    match = STALE_RISK.search(text)
+    return match.group(0).strip() if match else ""
+
+
+def wants_web_search(question: str) -> str:
+    """The phrase that asks for a live lookup, or "" if there isn't one.
+
+    Returning the matched phrase rather than a bool lets the caller quote it
+    back — "you asked me to 'look up'" is a much clearer prompt than a bare
+    "this might need the web".
+    """
+    text = (question or "").strip()
+    if not text or NO_LOOKUP.search(text):
+        return ""
+    match = WEB_LOOKUP.search(text)
+    return match.group(0).strip() if match else ""
 
 
 def gather(client: SearxngClient, query: str,

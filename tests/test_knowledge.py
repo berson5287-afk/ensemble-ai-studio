@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aichatlab.knowledge import (
@@ -208,3 +210,64 @@ def test_substantial_exchanges_are_mined():
                         "loosen both slip nuts by hand before pulling the trap "
                         "free and cleaning the threads."] * 2))
     assert worth_learning_from(question, answer) is True
+
+
+def test_a_lesson_starting_with_a_number_keeps_it():
+    """Same stripper bug as the research parser: "3D" must not become "D"."""
+    lessons = parse_lessons("Printing | 3D prints warp when the bed is too cold")
+    assert lessons[0][1].startswith("3D")
+
+
+# ------------------------------------------- lessons stay in their own project
+#
+# "Make some performance upgrades" matches every project the user has ever
+# opened.  A lesson carrying another app's file paths does not become good
+# advice by being relevant-sounding — it becomes a model confidently
+# proposing `udbg/cache.py` inside a folder that has no `udbg` in it.
+
+def test_a_lesson_learned_in_one_project_stays_there(tmp_path):
+    base = KnowledgeBase(tmp_path / "k.json")
+    base.add("Caching", "udbg/cache.py holds the lru_cache helpers",
+             project="udbg")
+
+    assert base.relevant("caching helpers", project="udbg")
+    assert base.relevant("caching helpers", project="Replyit") == []
+
+
+def test_a_lesson_learned_outside_any_project_still_applies_everywhere(tmp_path):
+    base = KnowledgeBase(tmp_path / "k.json")
+    base.add("Caching", "lru_cache is not safe on methods taking self")
+
+    assert base.relevant("caching methods", project="Replyit")
+    assert base.relevant("caching methods")
+
+
+def test_recall_is_scoped_the_same_way_as_relevant(tmp_path):
+    base = KnowledgeBase(tmp_path / "k.json")
+    base.add("Caching", "udbg/cache.py holds the lru_cache helpers",
+             project="udbg")
+
+    assert base.recall("caching helpers", project="Replyit") == []
+
+
+def test_the_project_survives_a_round_trip(tmp_path):
+    path = tmp_path / "k.json"
+    KnowledgeBase(path).add_many([("Caching", "a lesson about caching here")],
+                                 project="Replyit")
+
+    assert KnowledgeBase(path).lessons[0].project == "Replyit"
+
+
+def test_an_older_knowledge_file_without_projects_still_loads(tmp_path):
+    """Everything learned before this existed is general, which is the same
+    behaviour those lessons already had."""
+    path = tmp_path / "k.json"
+    path.write_text(json.dumps({"lessons": [
+        {"topic": "Caching", "text": "a lesson from before projects existed",
+         "id": "abc", "created_at": "2026-01-01", "source": "", "uses": 0}]}),
+        encoding="utf-8")
+
+    base = KnowledgeBase(path)
+
+    assert base.lessons[0].project == ""
+    assert base.relevant("caching lesson", project="anything")

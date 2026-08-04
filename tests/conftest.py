@@ -56,22 +56,27 @@ class FakeClient:
     """A stand-in for OllamaClient that records what it was asked."""
 
     def __init__(self, server: str = "local", reply: str = "",
-                 fail_on: str | None = None):
+                 fail_on: str | None = None, thinking: str = ""):
         self.base_url = "http://fake:11434"
         self.server = server
         self.reply = reply
         self.fail_on = fail_on
+        self.thinking = thinking
         self.calls: list[dict] = []
 
-    def chat(self, model, messages, options=None, on_token=None, cancel=None):
+    def chat(self, model, messages, options=None, on_token=None, cancel=None,
+             think=None, on_thought=None):
         self.calls.append({"model": model, "messages": messages,
-                           "options": options})
+                           "options": options, "think": think})
         if self.fail_on and self.fail_on in model:
             raise RuntimeError("boom")
+        if self.thinking and on_thought:
+            on_thought(self.thinking)
         text = self.reply or f"reply from {model}"
         if on_token:
             on_token(text)
         return ChatResult(model=model, server=self.server, text=text,
+                          thinking=self.thinking if think else "",
                           elapsed_s=0.25, eval_tokens=12,
                           raw={"eval_duration": 250_000_000})
 
@@ -81,6 +86,10 @@ class FakeClient:
     @property
     def last_prompt(self) -> str:
         return self.calls[-1]["messages"][-1]["content"]
+
+    @property
+    def last_think(self):
+        return self.calls[-1]["think"]
 
 
 @pytest.fixture

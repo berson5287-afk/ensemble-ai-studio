@@ -131,10 +131,19 @@ class SettingsDialog(tk.Toplevel):
         tk.Entry(self, textvariable=self.cache_ttl, font=FONT, width=9,
                  relief="solid", bd=1).grid(row=row + 5, column=1, sticky="w",
                                             padx=(6, 12))
-        tk.Label(self, text="weather and news expire in 15 anyway",
-                 font=FONT_SMALL, bg=PANEL, fg=MUTED).grid(
-            row=row + 5, column=2, columnspan=2, sticky="w")
-        return row + 6
+        tk.Label(self, text="0 = never expire · weather and news always refresh "
+                            "every 15 min", font=FONT_SMALL, bg=PANEL,
+                 fg=MUTED).grid(row=row + 5, column=2, columnspan=2, sticky="w")
+
+        self.assess_first = tk.BooleanVar(
+            value=bool(self.settings.get("assess_before_search", True)))
+        tk.Checkbutton(self, text="Read attached files first, and only search "
+                                  "if they don't answer it",
+                       variable=self.assess_first, font=FONT, bg=PANEL,
+                       activebackground=PANEL, fg="#1f2430",
+                       highlightthickness=0, bd=0, cursor="hand2").grid(
+            row=row + 6, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        return row + 7
 
     def _connect_searxng(self, status) -> None:
         url = self.searxng_var.get().strip()
@@ -189,6 +198,28 @@ class SettingsDialog(tk.Toplevel):
                  bg=PANEL, fg=MUTED).grid(row=row + 2, column=2, columnspan=2,
                                           sticky="w")
 
+        tk.Label(self, text="Largest model window:", font=FONT, bg=PANEL,
+                 fg="#1f2430").grid(row=row + 3, column=0, sticky="w", pady=4)
+        self.max_window = tk.StringVar(
+            value=str(self.settings.get("max_context_window", 32768)))
+        tk.Entry(self, textvariable=self.max_window, font=FONT, width=9,
+                 relief="solid", bd=1).grid(row=row + 3, column=1, sticky="w",
+                                            padx=(6, 12))
+        tk.Label(self, text="cap on the num_ctx we ask for — bigger costs VRAM",
+                 font=FONT_SMALL, bg=PANEL, fg=MUTED).grid(
+            row=row + 3, column=2, columnspan=2, sticky="w")
+
+        tk.Label(self, text="Give up after (seconds):", font=FONT, bg=PANEL,
+                 fg="#1f2430").grid(row=row + 4, column=0, sticky="w", pady=4)
+        self.timeout = tk.StringVar(
+            value=str(self.settings.get("request_timeout", 1800)))
+        tk.Entry(self, textvariable=self.timeout, font=FONT, width=9,
+                 relief="solid", bd=1).grid(row=row + 4, column=1, sticky="w",
+                                            padx=(6, 12))
+        tk.Label(self, text="silence allowed before giving up — a big prompt "
+                            "needs more", font=FONT_SMALL, bg=PANEL,
+                 fg=MUTED).grid(row=row + 4, column=2, columnspan=2, sticky="w")
+
         self.conversational = tk.BooleanVar(
             value=bool(self.settings.get("conversational", True)))
         tk.Checkbutton(self, text="Talk like a person (no restating the "
@@ -196,7 +227,7 @@ class SettingsDialog(tk.Toplevel):
                        variable=self.conversational, font=FONT, bg=PANEL,
                        activebackground=PANEL, fg="#1f2430",
                        highlightthickness=0, bd=0, cursor="hand2").grid(
-            row=row + 3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+            row=row + 5, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         self.smart_followups = tk.BooleanVar(
             value=bool(self.settings.get("smart_followups", True)))
@@ -205,16 +236,39 @@ class SettingsDialog(tk.Toplevel):
                        variable=self.smart_followups, font=FONT, bg=PANEL,
                        activebackground=PANEL, fg="#1f2430",
                        highlightthickness=0, bd=0, cursor="hand2").grid(
-            row=row + 4, column=0, columnspan=4, sticky="w")
+            row=row + 6, column=0, columnspan=4, sticky="w")
+
+        self.auto_compact = tk.BooleanVar(
+            value=bool(self.settings.get("auto_compact", True)))
+        tk.Checkbutton(self, text="Summarise old turns as the context fills, "
+                                  "instead of dropping them",
+                       variable=self.auto_compact, font=FONT, bg=PANEL,
+                       activebackground=PANEL, fg="#1f2430",
+                       highlightthickness=0, bd=0, cursor="hand2").grid(
+            row=row + 7, column=0, columnspan=4, sticky="w")
+
+        # Off, this is the old behaviour: a row in the chat with a button on
+        # it.  That row is easy to scroll past when the model has just written
+        # three paragraphs above it, which is how "it listed the changes and
+        # did nothing" gets said about a run that worked.
+        self.review_popup = tk.BooleanVar(
+            value=bool(self.settings.get("review_popup", True)))
+        tk.Checkbutton(self, text="Open the review window as soon as changes "
+                                  "are proposed (nothing is written until you "
+                                  "approve it)",
+                       variable=self.review_popup, font=FONT, bg=PANEL,
+                       activebackground=PANEL, fg="#1f2430",
+                       highlightthickness=0, bd=0, cursor="hand2").grid(
+            row=row + 8, column=0, columnspan=4, sticky="w")
 
         tk.Label(self, text="System prompt:", font=FONT, bg=PANEL,
-                 fg="#1f2430").grid(row=row + 5, column=0, sticky="nw", pady=4)
+                 fg="#1f2430").grid(row=row + 9, column=0, sticky="nw", pady=4)
         self.system_prompt = tk.Text(self, height=3, width=42, font=FONT,
                                      relief="solid", bd=1, wrap="word")
         self.system_prompt.insert("1.0", str(self.settings.get("system_prompt", "")))
-        self.system_prompt.grid(row=row + 5, column=1, columnspan=3, sticky="w",
+        self.system_prompt.grid(row=row + 9, column=1, columnspan=3, sticky="w",
                                 padx=(6, 0), pady=4)
-        return row + 6
+        return row + 10
 
     def _buttons(self, row: int) -> None:
         bar = tk.Frame(self, bg=PANEL)
@@ -271,14 +325,27 @@ class SettingsDialog(tk.Toplevel):
             self.settings["context_budget_tokens"] = max(500, int(self.budget.get()))
         except ValueError:
             self.settings["context_budget_tokens"] = 6000
+        try:
+            self.settings["max_context_window"] = max(2048,
+                                                      int(self.max_window.get()))
+        except ValueError:
+            self.settings["max_context_window"] = 32768
+        try:
+            self.settings["request_timeout"] = max(30, int(self.timeout.get()))
+        except ValueError:
+            self.settings["request_timeout"] = 1800
         self.settings["system_prompt"] = self.system_prompt.get("1.0", "end").strip()
         self.settings["searxng_url"] = self.searxng_var.get().strip()
         self.settings["conversational"] = bool(self.conversational.get())
         self.settings["smart_followups"] = bool(self.smart_followups.get())
         self.settings["research_cache"] = bool(self.research_cache.get())
+        self.settings["auto_compact"] = bool(self.auto_compact.get())
+        self.settings["review_popup"] = bool(self.review_popup.get())
+        self.settings["assess_before_search"] = bool(self.assess_first.get())
         try:
+            # 0 means "never expire" — don't clamp it up to 1
             self.settings["research_cache_ttl_minutes"] = max(
-                1, int(self.cache_ttl.get()))
+                0, int(self.cache_ttl.get()))
         except ValueError:
             self.settings["research_cache_ttl_minutes"] = 360
         self.settings.save()

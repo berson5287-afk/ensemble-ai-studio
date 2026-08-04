@@ -253,3 +253,212 @@ def test_incremental_styling_keeps_the_final_text_intact(view):
     assert "one" in text and "bullet two" in text and "tail text" in text
     assert "**" not in text
     assert "•" in text
+
+
+def test_end_stream_redraws_when_the_final_text_was_cleaned(view):
+    """Control markers like [END] are stripped from what the user sees."""
+    stream = view.start_stream(1, "Llama3.2 3B")
+    view.append_stream(stream, "Agreed, we've landed in the same place.\n[END]")
+    view.end_stream(stream, "Agreed, we've landed in the same place.")
+
+    text = view.transcript()
+    assert "[END]" not in text
+    assert "landed in the same place" in text
+
+
+# ------------------------------------------------- inline actions (buttons)
+
+def test_an_action_shows_its_question_and_buttons(view):
+    view.add_action("Enable web research?",
+                    [("Yes", lambda: None, True), ("No", lambda: None, False)],
+                    action_id="a1")
+
+    assert "Enable web research?" in view.transcript()
+    assert view.has_action("a1")
+
+
+def test_clicking_a_button_runs_its_callback(view):
+    clicked = []
+    view.add_action("Search?", [("Yes", lambda: clicked.append("yes"), True)],
+                    action_id="a1")
+
+    _click_action_button(view, 0)
+
+    assert clicked == ["yes"]
+
+
+def test_resolving_replaces_the_question_with_the_outcome(view):
+    view.add_action("Search?", [("Yes", lambda: None, True)], action_id="a1")
+
+    view.resolve_action("a1", "🔍 Web research switched on.")
+
+    assert "Search?" not in view.transcript()
+    assert "Web research switched on." in view.transcript()
+    assert not view.has_action("a1")
+
+
+def test_the_buttons_go_away_once_the_choice_is_made(view):
+    """A stale click must not send the same message twice.
+
+    Answering deletes the block, and the embedded buttons go with it, so
+    there is nothing left to click a second time.
+    """
+    clicks = []
+
+    def choose():
+        clicks.append(1)
+        view.resolve_action("a1", "done")
+
+    view.add_action("Search?", [("Yes", choose, True)], action_id="a1")
+    assert _action_buttons(view)
+
+    _click_action_button(view, 0)
+
+    assert clicks == [1]
+    assert _action_buttons(view) == []
+    assert not view.has_action("a1")
+
+
+def test_resolving_an_unknown_action_is_harmless(view):
+    view.resolve_action("nope", "text")   # must not raise
+
+
+def test_surrounding_messages_survive_an_action_being_resolved(view):
+    view.add_note("before")
+    view.add_action("Search?", [("Yes", lambda: None, True)], action_id="a1")
+    view.add_note("after")
+
+    view.resolve_action("a1", "chosen")
+
+    transcript = view.transcript()
+    assert "before" in transcript and "after" in transcript
+    assert "chosen" in transcript and "Search?" not in transcript
+
+
+def test_clearing_the_view_forgets_pending_actions(view):
+    view.add_action("Search?", [("Yes", lambda: None, True)], action_id="a1")
+
+    view.clear()
+
+    assert not view.has_action("a1")
+
+
+def _action_buttons(view):
+    buttons = []
+    for name in view.text.window_names():
+        widget = view.text.nametowidget(name)
+        buttons.extend(child for child in widget.winfo_children()
+                       if isinstance(child, tk.Button))
+    return buttons
+
+
+def _click_action_button(view, index):
+    _action_buttons(view)[index].invoke()
+
+
+# -- reasoning models ------------------------------------------------------
+def test_reasoning_streams_above_the_answer_as_it_arrives(view):
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "The user is asking about VRAM. ")
+    view.append_thought(1, "Two cards is not one pool.")
+
+    transcript = view.transcript()
+    assert "Thinking" in transcript
+    assert "Two cards is not one pool." in transcript
+    assert view.thought_text(1) == ("The user is asking about VRAM. "
+                                    "Two cards is not one pool.")
+
+
+def test_the_reasoning_folds_away_when_the_answer_starts(view):
+    """It exists to show life during the silence, not to crowd the reply."""
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "working it out")
+    assert not view._thoughts[1]["collapsed"]
+
+    view.append_stream(1, "They are separate 11 GB pools.")
+
+    assert view._thoughts[1]["collapsed"]
+    assert "click to show" in view.transcript()
+
+
+def test_the_reasoning_survives_the_final_markdown_redraw(view):
+    """`end_stream` deletes and repaints the answer; the working must sit
+    outside that range or a bold marker would wipe it."""
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "a private thought")
+    view.append_stream(1, "**bold** answer")
+    view.end_stream(1, "**bold** answer", thought_s=12.0)
+
+    assert view.thought_text(1) == "a private thought"
+    assert "Thought for 12s" in view.transcript()
+
+
+def test_a_reasoning_time_under_a_second_is_not_reported(view):
+    """"Thought for 0s" is worse than saying nothing about the time."""
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "quick one")
+    view.end_stream(1, "answer", thought_s=0.4)
+
+    assert "Thought for 0s" not in view.transcript()
+    assert "click to show" in view.transcript()
+
+
+def test_an_empty_thought_block_leaves_nothing_behind(view):
+    """Whitespace-only reasoning must not leave a stray header on screen."""
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "   ")
+    view.end_stream(1, "answer")
+
+    assert "Thinking" not in view.transcript()
+    assert "Thought for" not in view.transcript()
+
+
+def test_clicking_the_header_expands_and_collapses(view):
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "some working")
+    view.end_stream(1, "answer", thought_s=3.0)
+    assert view._thoughts[1]["collapsed"]
+
+    view.toggle_thought(1)
+    assert not view._thoughts[1]["collapsed"]
+    assert "▾" in view.transcript()
+
+    view.toggle_thought(1)
+    assert view._thoughts[1]["collapsed"]
+
+
+def test_a_reply_that_never_reasons_gets_no_block_at_all(view):
+    view.start_stream(1, "Llama3 8B")
+    view.append_stream(1, "Straight to the answer.")
+    view.end_stream(1, "Straight to the answer.")
+
+    assert 1 not in view._thoughts
+    assert "Thinking" not in view.transcript()
+
+
+def test_two_reasoning_models_keep_their_working_apart(view):
+    view.start_stream(1, "Qwen3 8B")
+    view.start_stream(2, "DeepSeek R1")
+    view.append_thought(1, "first model's working")
+    view.append_thought(2, "second model's working")
+
+    assert view.thought_text(1) == "first model's working"
+    assert view.thought_text(2) == "second model's working"
+
+
+def test_a_failed_reply_still_tidies_its_reasoning_away(view):
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "half a thought")
+    view.fail_stream(1, "the server went away")
+
+    assert view._thoughts[1]["collapsed"]
+    assert "the server went away" in view.transcript()
+
+
+def test_clearing_the_view_forgets_the_reasoning_blocks(view):
+    view.start_stream(1, "Qwen3 8B")
+    view.append_thought(1, "something")
+
+    view.clear()
+
+    assert not view._thoughts

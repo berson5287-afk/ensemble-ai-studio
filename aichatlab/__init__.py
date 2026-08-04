@@ -1,4 +1,8 @@
-"""AI Chat Lab — a multi-model LLM orchestration harness for Ollama."""
+"""Ensemble AI Studio — Local Multi-Model Orchestration and Agent Workspace.
 
-__version__ = "2.3.0"
+Formerly AI Chat Lab; the package name stays `aichatlab` so imports,
+settings paths and saved sessions all keep working.
+"""
+
+__version__ = "3.0.0"
 __all__ = ["__version__"]

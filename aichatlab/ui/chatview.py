@@ -13,8 +13,10 @@ from datetime import datetime
 from tkinter import scrolledtext
 
 from ..formatting import has_markdown, render_markdown, tidy
+from ..thinking import human_duration
 from .theme import (
     ACCENT,
+    Tooltip,
     ACCENT_DARK,
     BOT_BG,
     BOT_FG,
@@ -33,6 +35,7 @@ from .theme import (
     SELECTION,
     USER_BG,
     USER_FG,
+    flat_button,
 )
 
 TYPING_FRAMES = ("•  ", "•• ", "•••", " ••", "  •")
@@ -50,7 +53,11 @@ class ChatView(tk.Frame):
         super().__init__(master, **kwargs)
         self.on_status = on_status or (lambda _msg: None)
         self._streams: dict[int, dict] = {}
+        # Reasoning blocks outlive their stream: the block stays on screen,
+        # collapsed and clickable, long after the reply has finished.
+        self._thoughts: dict[int, dict] = {}
         self._notes: dict[str, tuple[str, str]] = {}
+        self._actions: dict[str, tuple[str, str]] = {}
         self._last_speaker: str | None = None
         self._replay_ids = -1
 
@@ -82,6 +89,11 @@ class ChatView(tk.Frame):
         tag("meta", font=FONT_SMALL, foreground=MUTED, lmargin1=12)
         tag("sys_msg", font=FONT_SMALL, foreground=MUTED, justify="center",
             spacing1=4, spacing3=4)
+        # A checklist is a list, so it is left-aligned and indented rather
+        # than centred like the one-line notes.
+        tag("checklist", font=FONT_MONO_SMALL, foreground=BOT_FG,
+            background=CODE_BG, lmargin1=26, lmargin2=40, rmargin=26,
+            spacing1=3, spacing3=3)
         tag("sys_err", font=FONT_SMALL, foreground=ERROR, justify="center",
             spacing1=4, spacing3=4)
 
@@ -213,7 +225,9 @@ class ChatView(tk.Frame):
     # -- public writing API ------------------------------------------------
     def clear(self) -> None:
         self._streams.clear()
+        self._thoughts.clear()
         self._notes.clear()
+        self._actions.clear()
         self._last_speaker = None
         self.text.config(state="normal")
         self.text.delete("1.0", tk.END)
@@ -232,7 +246,8 @@ class ChatView(tk.Frame):
         self.text.config(state="disabled")
         self._autoscroll(bottom)
 
-    def add_note(self, text: str, note_id: str | None = None) -> None:
+    def add_note(self, text: str, note_id: str | None = None,
+                 tag: str = "sys_msg") -> None:
         """A quiet centred line.  Passing the same note_id updates in place,
         which keeps multi-step progress (searching, reading, done) to one line
         instead of stacking four."""
@@ -242,10 +257,10 @@ class ChatView(tk.Frame):
         if note_id and note_id in self._notes:
             start, end = self._notes[note_id]
             self.text.delete(start, end)
-            self.text.insert(start, text, "sys_msg")
+            self.text.insert(start, text, tag)
         else:
             start_anchor = self.text.index("end-1c")
-            self.text.insert(tk.END, text, "sys_msg")
+            self.text.insert(tk.END, text, tag)
             end_anchor = self.text.index("end-1c")
             self.text.insert(tk.END, "\n\n", "sys_msg")
             if note_id:
@@ -259,9 +274,91 @@ class ChatView(tk.Frame):
         self.text.config(state="disabled")
         self._autoscroll(bottom)
 
+    def add_checklist(self, text: str, list_id: str) -> None:
+        """A multi-line checklist that redraws in place as steps tick off."""
+        self.add_note(text, note_id=f"list{list_id}", tag="checklist")
+
+    def close_checklist(self, list_id: str) -> None:
+        self.close_note(f"list{list_id}")
+
     def close_note(self, note_id: str) -> None:
         """Stop updating a note, so the next one starts a fresh line."""
         self._notes.pop(note_id, None)
+
+    def add_action(self, text: str, options, action_id: str) -> str:
+        """A note the user can answer — real buttons, embedded in the transcript.
+
+        Used where a modal would be wrong: the app has noticed something about
+        the message you just wrote and needs a decision, but interrupting with
+        a dialog box over the conversation is heavier than the question
+        deserves.  Answering replaces the whole block with a one-line record of
+        what you chose, so the transcript still reads as a history afterwards.
+        """
+        bottom = self._at_bottom()
+        self.text.config(state="normal")
+
+        start_anchor = self.text.index("end-1c")
+        self.text.insert(tk.END, f"{text}\n", "sys_msg")
+
+        row = tk.Frame(self.text, bg=CHAT_BG)
+        for option in options:
+            # Three or four elements: (label, callback, primary[, tooltip]).
+            # The tooltip is for buttons whose label is necessarily terse —
+            # a menu numbered 1..6 says nothing about what 4 *is*, and the
+            # full description belongs under the pointer, not in the label.
+            label, callback, primary = option[0], option[1], option[2]
+            tip = option[3] if len(option) > 3 else ""
+            # Guard against a double-click firing the action twice: the first
+            # click resolves the block, so the second finds nothing to do.
+            def fire(_event=None, callback=callback):
+                if action_id in self._actions:
+                    callback()
+            button = flat_button(row, label, fire, primary=primary)
+            button.config(font=FONT_SMALL, padx=10, pady=3)
+            button.pack(side="left", padx=4)
+            if tip:
+                Tooltip(button, tip)
+        self.text.window_create(tk.END, window=row)
+
+        self.text.tag_add("sys_msg", start_anchor, "end-1c")
+        end_anchor = self.text.index("end-1c")
+        self.text.insert(tk.END, "\n\n", "sys_msg")
+
+        start_mark, end_mark = f"act{action_id}a", f"act{action_id}b"
+        self.text.mark_set(start_mark, start_anchor)
+        self.text.mark_gravity(start_mark, "left")
+        self.text.mark_set(end_mark, end_anchor)
+        self.text.mark_gravity(end_mark, "right")
+        self._actions[action_id] = (start_mark, end_mark)
+
+        self.text.config(state="disabled")
+        self._autoscroll(bottom)
+        return action_id
+
+    def resolve_action(self, action_id: str, text: str = "") -> None:
+        """Answer a pending action, replacing its buttons with the outcome."""
+        marks = self._actions.pop(action_id, None)
+        if marks is None:
+            return
+        start_mark, end_mark = marks
+        bottom = self._at_bottom()
+        self.text.config(state="normal")
+        try:
+            self.text.delete(start_mark, end_mark)
+            if text:
+                self.text.insert(start_mark, text, "sys_msg")
+        except tk.TclError:
+            pass
+        for mark in marks:
+            try:
+                self.text.mark_unset(mark)
+            except tk.TclError:
+                pass
+        self.text.config(state="disabled")
+        self._autoscroll(bottom)
+
+    def has_action(self, action_id: str) -> bool:
+        return action_id in self._actions
 
     def add_error(self, text: str) -> None:
         bottom = self._at_bottom()
@@ -309,12 +406,20 @@ class ChatView(tk.Frame):
             self.text.insert(tk.END, "\n", "bot_name")
         self._last_speaker = speaker
 
+        # A reasoning block, when there is one, goes here — above the answer
+        # and outside the start..body range that `end_stream` redraws, so a
+        # markdown re-render cannot wipe it.
+        thought_anchor = self.text.index("end-1c")
+
         self.text.insert(tk.END, " ", "bot_msg")
         body_anchor = self.text.index("end-1c")
         self.text.insert(tk.END, " \n\n")
 
         head_mark, body_mark = f"s{stream_id}head", f"s{stream_id}body"
         start_mark = f"s{stream_id}start"
+        thought_mark = f"s{stream_id}think"
+        self.text.mark_set(thought_mark, thought_anchor)
+        self.text.mark_gravity(thought_mark, "right")
         for mark, anchor in ((head_mark, head_anchor), (body_mark, body_anchor)):
             self.text.mark_set(mark, anchor)
             self.text.mark_gravity(mark, "right")
@@ -329,7 +434,7 @@ class ChatView(tk.Frame):
         self._streams[stream_id] = {
             "holder": holder, "body": body_mark, "head": head_mark,
             "start": start_mark, "tail": tail_mark, "chunks": [],
-            "pending": "", "typing": False,
+            "pending": "", "typing": False, "thought": thought_mark,
         }
         self._start_typing(stream_id)
         self._autoscroll(bottom)
@@ -384,6 +489,136 @@ class ChatView(tk.Frame):
         except tk.TclError:
             pass
 
+    # -- reasoning ---------------------------------------------------------
+    def append_thought(self, stream_id: int, chunk: str) -> None:
+        """Stream a reasoning model's working, above the answer it precedes.
+
+        Qwen3 and friends can reason for a minute before writing a word.
+        Dropping that — which is what reading only `message.content` does —
+        turns a model that is working perfectly into one that appears to have
+        hung, which is the single complaint this app has spent the most
+        effort on.  So the reasoning is shown live, dimmed and indented so it
+        never reads as the answer, and folded away once the answer arrives.
+        """
+        stream = self._streams.get(stream_id)
+        if not stream or not chunk:
+            return
+        block = self._thoughts.get(stream_id) or self._open_thought(stream_id)
+        if block is None:
+            return
+        bottom = self._at_bottom()
+        self.text.config(state="normal")
+        try:
+            self.text.insert(stream["thought"], chunk, block["tag"])
+        except tk.TclError:
+            self.text.config(state="disabled")
+            return
+        block["chunks"].append(chunk)
+        self.text.config(state="disabled")
+        self._autoscroll(bottom)
+
+    def _open_thought(self, stream_id: int) -> dict | None:
+        stream = self._streams.get(stream_id)
+        if not stream:
+            return None
+        tag, head_tag = f"thought{stream_id}", f"thoughthead{stream_id}"
+        self.text.tag_config(tag, font=FONT_CHAT_ITALIC, foreground=MUTED,
+                             lmargin1=34, lmargin2=34)
+        self.text.tag_config(head_tag, font=FONT_SMALL, foreground=MUTED,
+                             lmargin1=18, lmargin2=18)
+        self.text.tag_bind(head_tag, "<Button-1>",
+                           lambda _e, sid=stream_id: self.toggle_thought(sid))
+        self.text.tag_bind(head_tag, "<Enter>",
+                           lambda _e: self.text.config(cursor="hand2"))
+        self.text.tag_bind(head_tag, "<Leave>",
+                           lambda _e: self.text.config(cursor=""))
+        # Keep the reasoning behind the answer, whatever order the tags were
+        # created in — an italic grey trace must never outrank the reply.
+        self.text.tag_lower(tag, "bot_msg")
+
+        mark = stream["thought"]
+        self.text.config(state="normal")
+        head_anchor = self.text.index(mark)
+        self.text.insert(mark, "💭 Thinking…\n", head_tag)
+        self.text.config(state="disabled")
+
+        head_mark = f"s{stream_id}thead"
+        self.text.mark_set(head_mark, head_anchor)
+        self.text.mark_gravity(head_mark, "left")
+
+        block = {"tag": tag, "head_tag": head_tag, "head": head_mark,
+                 "chunks": [], "collapsed": False, "seconds": 0.0}
+        self._thoughts[stream_id] = block
+        return block
+
+    def _set_thought_header(self, block: dict, text: str) -> None:
+        """Rewrite the one-line header in place."""
+        head = block["head"]
+        self.text.config(state="normal")
+        try:
+            self.text.delete(head, f"{head} lineend")
+            self.text.insert(head, text, block["head_tag"])
+        except tk.TclError:
+            pass
+        self.text.config(state="disabled")
+
+    def toggle_thought(self, stream_id: int) -> None:
+        block = self._thoughts.get(stream_id)
+        if not block:
+            return
+        self.collapse_thought(stream_id, not block["collapsed"])
+
+    def collapse_thought(self, stream_id: int, collapsed: bool = True) -> None:
+        block = self._thoughts.get(stream_id)
+        if not block:
+            return
+        block["collapsed"] = collapsed
+        try:
+            self.text.tag_config(block["tag"], elide=collapsed)
+        except tk.TclError:
+            return
+        # "Thought for 0s" is worse than saying nothing about the time.
+        took = (human_duration(block["seconds"])
+                if block["seconds"] >= 1 else "")
+        if collapsed:
+            label = f"💭 Thought for {took}" if took else "💭 Reasoning"
+            self._set_thought_header(block, f"▸ {label} — click to show")
+        else:
+            label = f"💭 Thought for {took}" if took else "💭 Thinking…"
+            self._set_thought_header(block, f"▾ {label}")
+
+    def close_thought(self, stream_id: int, seconds: float = 0.0) -> None:
+        """The answer has started, so fold the working away."""
+        block = self._thoughts.get(stream_id)
+        if not block:
+            return
+        block["seconds"] = seconds
+        if not "".join(block["chunks"]).strip():
+            # Nothing was actually reasoned; leave no empty block behind.
+            self._drop_thought(stream_id)
+            return
+        self.collapse_thought(stream_id, True)
+
+    def _drop_thought(self, stream_id: int) -> None:
+        block = self._thoughts.pop(stream_id, None)
+        if not block:
+            return
+        head = block["head"]
+        self.text.config(state="normal")
+        try:
+            self.text.delete(head, f"{head} lineend + 1c")
+        except tk.TclError:
+            pass
+        self.text.config(state="disabled")
+        try:
+            self.text.mark_unset(head)
+        except tk.TclError:
+            pass
+
+    def thought_text(self, stream_id: int) -> str:
+        block = self._thoughts.get(stream_id)
+        return "".join(block["chunks"]) if block else ""
+
     # -- streaming body ----------------------------------------------------
     def append_stream(self, stream_id: int, chunk: str) -> None:
         stream = self._streams.get(stream_id)
@@ -391,6 +626,10 @@ class ChatView(tk.Frame):
             return
         bottom = self._at_bottom()
         self._stop_typing(stream)
+        block = self._thoughts.get(stream_id)
+        if block is not None and not block["collapsed"]:
+            # The answer has started, so the working is no longer the news.
+            self.collapse_thought(stream_id, True)
         self.text.config(state="normal")
         self.text.insert(stream["body"], chunk, "bot_msg")
         stream["chunks"].append(chunk)
@@ -434,11 +673,12 @@ class ChatView(tk.Frame):
         stream["pending"] = remainder
 
     def end_stream(self, stream_id: int, text: str | None = None,
-                   meta: str = "") -> None:
+                   meta: str = "", thought_s: float = 0.0) -> None:
         stream = self._streams.pop(stream_id, None)
         if not stream:
             return
         self._stop_typing(stream)
+        self.close_thought(stream_id, thought_s)
 
         final = text if text is not None else "".join(stream["chunks"])
         final = tidy(final)
@@ -448,7 +688,10 @@ class ChatView(tk.Frame):
         self.text.config(state="normal")
         # Markdown is re-rendered once at the end: parsing it mid-stream would
         # mean guessing whether a lone "**" is an opening or closing marker.
-        if final and has_markdown(final):
+        # We also redraw whenever the caller hands back text that differs from
+        # what streamed — that's how control markers like [END] get removed.
+        streamed = tidy("".join(stream["chunks"]))
+        if final and (has_markdown(final) or final != streamed):
             self.text.delete(stream["start"], stream["body"])
             for run_text, run_tags in render_markdown(final):
                 self.text.insert(stream["body"], run_text,
@@ -458,7 +701,7 @@ class ChatView(tk.Frame):
         self.text.config(state="disabled")
         self._autoscroll(bottom)
 
-        for key in ("body", "head", "start", "tail"):
+        for key in ("body", "head", "start", "tail", "thought"):
             try:
                 self.text.mark_unset(stream[key])
             except tk.TclError:
@@ -468,6 +711,7 @@ class ChatView(tk.Frame):
         stream = self._streams.pop(stream_id, None)
         if stream:
             self._stop_typing(stream)
+            self.close_thought(stream_id)
             stream["holder"].text = message
             self.text.config(state="normal")
             self.text.insert(stream["body"], f"⚠ {message}", "sys_err")

@@ -64,9 +64,22 @@ def is_volatile(query: str) -> bool:
     return bool(VOLATILE.search(query or ""))
 
 
-def ttl_for(query: str, base_minutes: int = DEFAULT_TTL_MINUTES) -> int:
-    """Seconds a result for this query stays usable."""
-    base = max(60, int(base_minutes) * 60)
+def ttl_for(query: str, base_minutes: int = DEFAULT_TTL_MINUTES) -> int | None:
+    """Seconds a result for this query stays usable, or None for never.
+
+    A base of 0 means "keep indefinitely" — but time-sensitive questions are
+    still capped, because no setting should let the app serve last Tuesday's
+    forecast as though it were today's.
+    """
+    try:
+        minutes = int(base_minutes)
+    except (TypeError, ValueError):
+        minutes = DEFAULT_TTL_MINUTES
+
+    if minutes <= 0:
+        return VOLATILE_TTL_SECONDS if is_volatile(query) else None
+
+    base = max(60, minutes * 60)
     return min(base, VOLATILE_TTL_SECONDS) if is_volatile(query) else base
 
 
@@ -152,8 +165,12 @@ class ResearchCache:
         return None
 
     def _expired(self, entry: dict, now: float) -> bool:
-        ttl = entry.get("ttl") or ttl_for(entry.get("query", ""),
-                                          self.base_ttl_minutes)
+        if "ttl" in entry:
+            ttl = entry["ttl"]
+        else:
+            ttl = ttl_for(entry.get("query", ""), self.base_ttl_minutes)
+        if ttl is None:                      # kept indefinitely
+            return False
         return (now - entry.get("at", 0)) > ttl
 
     # -- writing -----------------------------------------------------------

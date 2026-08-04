@@ -107,3 +107,148 @@ def test_list_models_is_sorted(client, monkeypatch):
 def test_unconfigured_server_refuses_politely():
     with pytest.raises(OllamaError, match="no address"):
         OllamaClient("").chat("m", [])
+
+
+# --------------------------------------------- replies that were cut short
+
+def test_a_reply_stopped_by_the_length_cap_is_flagged(monkeypatch):
+    """Ollama says done_reason "length" when generation hit num_predict.
+    Without surfacing it, a capped answer that stops mid-sentence looks
+    exactly like a finished one."""
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=ndjson("Here are a few ideas: 1. Centralise",
+                     done={"done_reason": "length", "eval_count": 192})))
+
+    result = OllamaClient("http://x").chat("m", [{"role": "user", "content": "hi"}])
+
+    assert result.truncated
+    assert result.done_reason == "length"
+
+
+def test_a_reply_that_finished_normally_is_not_flagged(monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=ndjson("All done.", done={"done_reason": "stop"})))
+
+    assert not OllamaClient("http://x").chat(
+        "m", [{"role": "user", "content": "hi"}]).truncated
+
+
+def test_a_reply_with_no_done_reason_is_not_flagged(monkeypatch):
+    """Older Ollama builds omit the field entirely."""
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=ndjson("All done.")))
+
+    assert not OllamaClient("http://x").chat(
+        "m", [{"role": "user", "content": "hi"}]).truncated
+
+
+def test_a_cancelled_reply_is_not_reported_as_truncated(monkeypatch):
+    """You stopped it on purpose — that is not the model running out of room."""
+    from aichatlab.client import ChatResult
+
+    result = ChatResult(model="m", done_reason="length", cancelled=True)
+
+    assert not result.truncated
+
+
+# -- reasoning models ------------------------------------------------------
+def reasoning_stream(thoughts, answers, done=None):
+    """An Ollama stream that reasons first, then answers."""
+    lines = [json.dumps({"message": {"role": "assistant", "thinking": t},
+                         "done": False}).encode() for t in thoughts]
+    lines += [json.dumps({"message": {"role": "assistant", "content": c},
+                          "done": False}).encode() for c in answers]
+    payload = {"message": {"role": "assistant", "content": ""}, "done": True}
+    payload.update(done or {})
+    lines.append(json.dumps(payload).encode())
+    return lines
+
+
+def test_reasoning_is_captured_separately_from_the_answer(client, monkeypatch):
+    """Reading only `content` is what makes a reasoning model look hung."""
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=reasoning_stream(["The user wants ", "a number."],
+                               ["It is ", "42."])))
+
+    thoughts, tokens = [], []
+    result = client.chat("qwen3:8b", [{"role": "user", "content": "hi"}],
+                         on_token=tokens.append, on_thought=thoughts.append,
+                         think=True)
+
+    assert result.text == "It is 42."
+    assert result.thinking == "The user wants a number."
+    assert thoughts == ["The user wants ", "a number."]
+    assert tokens == ["It is ", "42."]
+
+
+def test_reasoning_streams_live_rather_than_arriving_at_the_end(client,
+                                                               monkeypatch):
+    """The whole point is showing life during the silence before the answer."""
+    order = []
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=reasoning_stream(["thinking…"], ["answer"])))
+
+    client.chat("qwen3:8b", [{"role": "user", "content": "hi"}],
+                on_token=lambda t: order.append(("token", t)),
+                on_thought=lambda t: order.append(("thought", t)),
+                think=True)
+
+    assert order[0][0] == "thought"
+    assert order[-1][0] == "token"
+
+
+def test_the_think_field_is_sent_only_when_asked(client, monkeypatch):
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent.update(kwargs.get("json") or {})
+        return FakeResponse(lines=ndjson("hi"))
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    client.chat("qwen3:8b", [{"role": "user", "content": "hi"}], think=True)
+    assert sent["think"] is True
+
+    sent.clear()
+    client.chat("llama3:8b", [{"role": "user", "content": "hi"}])
+    assert "think" not in sent, "Ollama rejects `think` on a model that " \
+                                "does not reason, so it must be omitted"
+
+
+def test_a_level_string_is_passed_through_for_gpt_oss(client, monkeypatch):
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent.update(kwargs.get("json") or {})
+        return FakeResponse(lines=ndjson("hi"))
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    client.chat("gpt-oss:20b", [{"role": "user", "content": "hi"}],
+                think="medium")
+
+    assert sent["think"] == "medium"
+
+
+def test_time_spent_reasoning_is_measured(client, monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=reasoning_stream(["mm"], ["done"])))
+
+    result = client.chat("qwen3:8b", [{"role": "user", "content": "hi"}],
+                         think=True)
+
+    assert result.thought_s >= 0
+    assert result.thinking
+
+
+def test_inline_thought_tags_are_split_out_on_old_servers(client, monkeypatch):
+    """Servers predating the `thinking` field leave it in the content."""
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        lines=ndjson("<think>", "hmm, 6*7", "</think>", "It is 42.")))
+
+    caught = []
+    result = client.chat("qwen3:8b", [{"role": "user", "content": "hi"}],
+                         on_thought=caught.append)
+
+    assert result.text == "It is 42."
+    assert "hmm, 6*7" in result.thinking
+    assert caught, "the reasoning was found but never handed to the caller"
