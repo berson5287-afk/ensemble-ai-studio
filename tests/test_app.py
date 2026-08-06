@@ -3809,3 +3809,52 @@ def test_the_runner_can_be_switched_off(app, tmp_path):
     _wait_tests_done(app, seconds=3)
 
     assert "🧪" not in app.chat.transcript()
+
+
+# -- the import sandbox, in the pipeline ------------------------------------
+def test_a_module_level_crash_arrives_flagged_not_clean(app, tmp_path):
+    """Fatal, outside any function, invisible to every reading-based check —
+    and now caught before the diff is even shown."""
+    (tmp_path / "engine.py").write_text("X = 1\n", encoding="utf-8")
+    app.project = tmp_path
+    app.project_texts = {"engine.py": "X = 1\n"}
+    app.sent_files = {"engine.py"}
+    app.settings["review_popup"] = False
+
+    app._check_for_edits(
+        "=== EDIT: engine.py ===\n--- FIND\nX = 1\n--- REPLACE\n"
+        "X = compute_limit()\n=== END EDIT ===\n")
+
+    trace = app.edit_debug.last()
+    assert trace.verdict == "offered"
+    assert trace.flaws and "compute_limit" in trace.flaws[0]["problem"]
+    assert "importing the edited" in app.chat.transcript()
+
+
+def test_a_clean_edit_is_not_slowed_into_a_flag(app, tmp_path):
+    (tmp_path / "engine.py").write_text("X = 1\n", encoding="utf-8")
+    app.project = tmp_path
+    app.project_texts = {"engine.py": "X = 1\n"}
+    app.sent_files = {"engine.py"}
+    app.settings["review_popup"] = False
+
+    app._check_for_edits(
+        "=== EDIT: engine.py ===\n--- FIND\nX = 1\n--- REPLACE\n"
+        "X = 2\n=== END EDIT ===\n")
+
+    assert not app.edit_debug.last().flaws
+
+
+def test_the_sandbox_can_be_switched_off(app, tmp_path):
+    (tmp_path / "engine.py").write_text("X = 1\n", encoding="utf-8")
+    app.project = tmp_path
+    app.project_texts = {"engine.py": "X = 1\n"}
+    app.sent_files = {"engine.py"}
+    app.settings["review_popup"] = False
+    app.settings["sandbox_imports"] = False
+
+    app._check_for_edits(
+        "=== EDIT: engine.py ===\n--- FIND\nX = 1\n--- REPLACE\n"
+        "X = compute_limit()\n=== END EDIT ===\n")
+
+    assert not app.edit_debug.last().flaws

@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .. import __version__, gpu, intent, projectindex, projectmemory, recovery
 from .. import edits as edit_tools
-from .. import bridge, codetree, editdebug, suggest, testrun, validate
+from .. import bridge, codetree, editdebug, sandbox, suggest, testrun, validate
 from ..activity import (
     BIG_PROMPT_TOKENS,
     Tracker,
@@ -1402,6 +1402,19 @@ class ChatLabApp:
             found = validate.introduced(
                 edit.name, edit_tools.read_current(self.project, edit.name),
                 edit.new_text)
+            if not found and self.settings.get("sandbox_imports", True):
+                # The layer between reading the code and running the tests:
+                # import the edited text in a throwaway subprocess, before
+                # anything is written.  Module-level crashes — a NameError
+                # outside any function, a missing import — are invisible to
+                # the scope checks and fatal to everything that imports the
+                # file.  Inconclusive (a GUI's event loop, a timeout) never
+                # counts as failure.
+                verdict = sandbox.check_import(
+                    self.project, edit.name, edit.new_text)
+                problem = sandbox.problem_from(verdict, edit.name)
+                if problem is not None:
+                    found = [problem]
             if found:
                 flaws[edit.name] = found
                 trace.broke(edit.name, found)

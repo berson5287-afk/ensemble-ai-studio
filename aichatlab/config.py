@@ -79,6 +79,9 @@ DEFAULTS: dict[str, Any] = {
     # a self-test script). Green is proof; red rolls the apply back
     # to the snapshot it just made.
     "test_after_apply": True,
+    # Import the edited file in a throwaway subprocess before the
+    # diff is shown; a module-level crash arrives un-ticked and red.
+    "sandbox_imports": True,
     "test_timeout": 180,
     # Ceiling on the num_ctx we ask Ollama for.  Context costs VRAM, so a
     # folder attachment that pushes the budget to 120k should not silently try
