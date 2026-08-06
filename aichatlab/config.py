@@ -75,6 +75,11 @@ DEFAULTS: dict[str, Any] = {
     # ordinary way to start this app is to double-click it, where there is
     # nowhere to put an environment variable.
     "control_bridge": False,
+    # After an apply, run the project's own tests (pytest layout or
+    # a self-test script). Green is proof; red rolls the apply back
+    # to the snapshot it just made.
+    "test_after_apply": True,
+    "test_timeout": 180,
     # Ceiling on the num_ctx we ask Ollama for.  Context costs VRAM, so a
     # folder attachment that pushes the budget to 120k should not silently try
     # to allocate a 120k window on a laptop GPU.

@@ -198,7 +198,8 @@ def describe(changes) -> str:
     return part
 
 
-def build_change_prompt(change: Change, current: str, instructions: str) -> str:
+def build_change_prompt(change: Change, current: str, instructions: str,
+                        evidence: str = "") -> str:
     """Ask for one change, on one file, with nothing else wanted.
 
     Everything here is aimed at the failure this exists to fix.  The file is
@@ -209,9 +210,24 @@ def build_change_prompt(change: Change, current: str, instructions: str) -> str:
     the block is closed.  And the change is stated back to it verbatim, so
     the request is "do this one thing" rather than "decide again".
     """
+    already = ""
+    if evidence:
+        # The model is handed the whole file and demonstrably does not read
+        # the part it is about to rewrite — measured live, every redundant
+        # guard it produced already existed in the function it named.  So
+        # the function is put directly under its nose, with permission to
+        # say so if the work is already done.
+        already = (
+            f"READ THIS BEFORE WRITING ANYTHING. What the file already "
+            f"contains that bears on this change:\n\n{evidence}\n\n"
+            f"If what was asked for is already present above — an existing "
+            f"guard, an existing default, an existing check that covers it — "
+            f"reply with the single word NOCHANGE. Do not restate an "
+            f"existing protection in new words; that is not a change, and "
+            f"it will be refused.\n\n")
     return (
         f"You already looked at this project and said you would make this "
-        f"change:\n\n    {change.description}\n\n"
+        f"change:\n\n    {change.description}\n\n{already}"
         f"Here is the current, complete contents of {change.file}. The lines "
         f"you quote must be copied from it exactly — character for "
         f"character, including indentation and blank lines. Do not retype "

@@ -214,6 +214,36 @@ def _class_scope_leaks(tree) -> list[Problem]:
 TERMINAL = (ast.Return, ast.Raise, ast.Continue, ast.Break)
 
 
+def _block_terminates(block) -> bool:
+    return bool(block) and _terminates(block[-1])
+
+
+def _terminates(stmt) -> bool:
+    """Can execution ever continue past this statement?
+
+    The bare cases are trivial.  The compound ones exist because a live edit
+    walked straight through the old check: a model pasted a whole new
+    function body — ending in a try/except where *every* branch returns —
+    above the original, and the duplicate below was not flagged, because a
+    `try` is not a `return` even when nothing inside it ever falls through.
+    """
+    if isinstance(stmt, TERMINAL):
+        return True
+    if isinstance(stmt, ast.If):
+        return (_block_terminates(stmt.body)
+                and _block_terminates(stmt.orelse))
+    if isinstance(stmt, ast.Try):
+        if _block_terminates(stmt.finalbody):
+            return True             # finally returns: nothing escapes it
+        handlers_end = all(_block_terminates(h.body) for h in stmt.handlers)
+        body_path = (_block_terminates(stmt.orelse) if stmt.orelse
+                     else _block_terminates(stmt.body))
+        return bool(stmt.handlers) and handlers_end and body_path
+    if isinstance(stmt, ast.With):
+        return _block_terminates(stmt.body)
+    return False
+
+
 def _unreachable_in(tree) -> list[Problem]:
     """Code left stranded after a return, raise, break or continue.
 
@@ -235,7 +265,7 @@ def _unreachable_in(tree) -> list[Problem]:
             if not isinstance(block, list):
                 continue
             for first, second in zip(block, block[1:]):
-                if not isinstance(first, TERMINAL):
+                if not _terminates(first):
                     continue
                 where = getattr(first, "__class__").__name__.lower()
                 found.append(Problem(

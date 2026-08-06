@@ -389,3 +389,142 @@ def project_map(texts: dict) -> str:
             about = "defines " + ", ".join(f"{fn}()" for fn in found[:5])
         lines.append(f"{name} — {about[:160]}")
     return "\n".join(lines)
+
+
+# -- does this already exist? ----------------------------------------------
+# The single most-measured failure of the whole edit pipeline: every model,
+# both sizes, proposing guards the code already has (0/3 applied picks, then
+# 5/5 redundant menu claims).  The models were *given* the whole file and
+# duplicated anyway — attention, not context, was what they lacked.  We beat
+# it by hand all day the same way every time: grep the claim before the pick.
+# This is that grep, automated, at both moments it helped — a flag on the
+# menu row before a pick costs a model call, and pointed evidence in the
+# second-pass prompt so the model reads the function it was asked to change
+# before writing it again.
+
+def function_source(text: str, name: str, limit: int = 60) -> str:
+    """The current body of one function, by name, or "".
+
+    ast gives exact bounds for Python; the regex fallback covers .pyw files
+    that fail to parse and other languages, reading from the definition line
+    to the next line at the same or lower indentation.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text or "")
+        for node in ast.walk(tree):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == name):
+                lines = (text or "").splitlines()[
+                    node.lineno - 1:getattr(node, "end_lineno", node.lineno)]
+                return "\n".join(lines[:limit])
+    except (SyntaxError, ValueError, RecursionError):
+        pass
+    match = re.search(
+        rf"^([ \t]*)(?:async\s+)?(?:def|function|fn|sub)\s+{re.escape(name)}\b.*$",
+        text or "", re.MULTILINE)
+    if not match:
+        return ""
+    indent = match.group(1)
+    lines = [match.group(0)]
+    for line in (text or "")[match.end():].splitlines()[1:]:
+        if line.strip() and not line.startswith(indent + " ") \
+                and not line.startswith(indent + "\t") \
+                and line[:len(indent) + 1].strip():
+            break
+        lines.append(line)
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines)
+
+
+# Words in a claim that describe the *kind* of change rather than its
+# subject.  "Add a guard clause to check ..." — 'add', 'clause' and 'check'
+# say nothing about what is being guarded; overlap on them proves nothing.
+CLAIM_NOISE = {
+    "add", "adding", "ensure", "ensures", "ensuring", "check", "checks",
+    "checking", "guard", "clause", "include", "introduce", "implement",
+    "validate", "validation", "handle", "handles", "handling", "improve",
+    "update", "make", "prevent", "avoid", "proceed", "proceeding", "before",
+    "early", "return", "returns", "returning", "function", "method", "input",
+    "parameter", "parameters", "value", "values", "case", "cases",
+}
+
+
+def claim_terms(description: str) -> list:
+    """The distinctive words of a claim — what it is about, not what kind of
+    edit it is."""
+    from .retrieval import terms
+
+    found = []
+    for term in terms(description or ""):
+        if term in CLAIM_NOISE or len(term) < 3:
+            continue
+        if term not in found:
+            found.append(term)
+    return found
+
+
+def existing_evidence(change, texts: dict) -> str:
+    """What the file already contains that bears on this claim.
+
+    The named function's current body first — the thing the model is about
+    to rewrite and demonstrably does not read — then any other line in the
+    file matching the claim's distinctive terms, numbered so the second pass
+    can anchor honestly.
+    """
+    text = texts.get(change.file, "")
+    if not text:
+        return ""
+    parts = []
+    for match in NAMES_FUNCTION.finditer(change.description or ""):
+        source = function_source(text, match.group(1))
+        if source:
+            parts.append(f"Current body of {match.group(1)}():\n{source}")
+    wanted = claim_terms(change.description)
+    if wanted:
+        hits = []
+        for number, line in enumerate((text or "").splitlines(), 1):
+            lowered = line.lower()
+            if any(term in lowered for term in wanted) and line.strip():
+                hits.append(f"  line {number}: {line.strip()[:110]}")
+            if len(hits) >= 12:
+                break
+        if hits:
+            parts.append("Lines elsewhere in the file matching this "
+                         "claim's terms (" + ", ".join(wanted[:6]) + "):\n"
+                         + "\n".join(hits))
+    return "\n\n".join(parts)
+
+
+# The shapes a guard actually takes, for the menu-row flag.  Deliberately
+# narrow: a wrong "may already exist" teaches people to ignore the flag, so
+# it only fires when the claim is guard-shaped AND the function body already
+# carries a tolerance or early-out for one of the claim's subjects.
+GUARD_CLAIM = re.compile(
+    r"\b(?:guard|check|validate|ensure|empty|none|null|missing|early\s+"
+    r"return|return\s+early)\b", re.IGNORECASE)
+GUARD_BODY = re.compile(
+    r"^\s*if\s+(?:not\s+\w+|\w+\s+is\s+None)\b"        # if not x / if x is None
+    r"|\bor\s+(?:\"\"|''|0|\[\]|\{\})"                  # x or ""
+    r"|\.get\([^)]*,\s*(?:\"\"|''|None|0|\[\])\)",      # .get(k, default)
+    re.MULTILINE)
+
+
+def may_already_exist(change, texts: dict) -> str:
+    """A one-line warning when a candidate smells pre-existing, or "".
+
+    Conservative on purpose.  It fires only when the claim is guard-shaped
+    and the named function's body already contains guard machinery — which
+    is exactly the redundancy that went 5-for-5 in live testing.
+    """
+    if not GUARD_CLAIM.search(change.description or ""):
+        return ""
+    text = texts.get(change.file, "")
+    for match in NAMES_FUNCTION.finditer(change.description or ""):
+        source = function_source(text, match.group(1))
+        if source and GUARD_BODY.search(source):
+            return (f"{match.group(1)}() already carries guards — "
+                    f"check it is not already done")
+    return ""

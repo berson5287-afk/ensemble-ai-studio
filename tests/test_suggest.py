@@ -293,3 +293,108 @@ def test_the_map_rides_into_the_wrap():
 
     assert "a.py — the frobnicator" in wrapped
     assert "map of the project" in wrapped
+
+
+# -- does this already exist? ----------------------------------------------
+# The most-measured failure of the pipeline: models proposing guards the code
+# already has. This is the grep we ran by hand all day, automated at both
+# moments it helped.
+GUARDED = '''\
+def polish_draft(template_text, subject):
+    """Returns (text_or_None, reason)."""
+    if not template_text:
+        return None, "empty_template"
+    voice = (subject or "").strip()
+    return voice, "ok"
+
+def unguarded(rows):
+    total = rows[0].count
+    return total
+'''
+TEXTS2 = {"draft.py": GUARDED}
+
+
+def test_function_source_extracts_the_named_body():
+    src = suggest.function_source(GUARDED, "polish_draft")
+
+    assert src.startswith("def polish_draft")
+    assert "empty_template" in src
+    assert "unguarded" not in src
+
+
+def test_function_source_handles_a_missing_name():
+    assert suggest.function_source(GUARDED, "imaginary") == ""
+
+
+def test_evidence_puts_the_named_function_under_the_models_nose():
+    change = Change("Add a guard clause to polish_draft() for an empty "
+                    "template_text", "draft.py")
+
+    evidence = suggest.existing_evidence(change, TEXTS2)
+
+    assert "Current body of polish_draft()" in evidence
+    assert "empty_template" in evidence
+
+
+def test_evidence_greps_the_claims_distinctive_terms():
+    change = Change("Handle empty template_text in polish_draft()",
+                    "draft.py")
+
+    evidence = suggest.existing_evidence(change, TEXTS2)
+
+    assert "line " in evidence
+    assert "template" in evidence.lower()
+
+
+def test_claim_terms_drop_the_edit_verbs():
+    terms = suggest.claim_terms(
+        "Add a guard clause to check that template_text is not empty")
+
+    assert "guard" not in terms and "check" not in terms and "add" not in terms
+    assert any("template" in t for t in terms)
+
+
+def test_a_guard_claim_against_a_guarded_function_is_flagged():
+    """The five-for-five case from live testing."""
+    change = Change("Add a guard clause to polish_draft() to return early "
+                    "when template_text is empty", "draft.py")
+
+    note = suggest.may_already_exist(change, TEXTS2)
+
+    assert "polish_draft() already carries guards" in note
+
+
+def test_a_guard_claim_against_an_unguarded_function_stays_silent():
+    change = Change("Add a check to unguarded() for an empty rows list",
+                    "draft.py")
+
+    assert suggest.may_already_exist(change, TEXTS2) == ""
+
+
+def test_a_non_guard_claim_is_never_flagged():
+    change = Change("Add a docstring to polish_draft() describing the "
+                    "return shape", "draft.py")
+
+    assert suggest.may_already_exist(change, TEXTS2) == ""
+
+
+def test_the_second_pass_prompt_carries_the_evidence_and_the_exit():
+    from aichatlab.intent import build_change_prompt
+
+    prompt = build_change_prompt(
+        Change("guard polish_draft() for empty input", "draft.py"),
+        GUARDED, "INSTRUCTIONS",
+        evidence="Current body of polish_draft():\n...")
+
+    assert "READ THIS BEFORE WRITING" in prompt
+    assert "Current body of polish_draft()" in prompt
+    assert "NOCHANGE" in prompt
+
+
+def test_no_evidence_means_no_extra_section():
+    from aichatlab.intent import build_change_prompt
+
+    prompt = build_change_prompt(
+        Change("guard something()", "draft.py"), GUARDED, "INSTRUCTIONS")
+
+    assert "READ THIS BEFORE WRITING" not in prompt

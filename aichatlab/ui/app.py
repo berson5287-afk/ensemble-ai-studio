@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .. import __version__, gpu, intent, projectindex, projectmemory, recovery
 from .. import edits as edit_tools
-from .. import bridge, editdebug, suggest, validate
+from .. import bridge, editdebug, suggest, testrun, validate
 from ..activity import (
     BIG_PROMPT_TOKENS,
     Tracker,
@@ -1702,15 +1702,25 @@ class ChatLabApp:
         # The full description, not the 90-character summary.  These lines
         # are the entire basis of the decision; an ellipsis exactly where the
         # sentence says what the change *does* turns the pick into a guess.
+        # Flags earn their place by being rare: "may already exist" is the
+        # redundancy that went five-for-five in live testing, said before a
+        # pick costs a model call rather than after.
+        flags = {}
+        for c in candidates:
+            note = suggest.may_already_exist(c, self.project_texts)
+            if note:
+                flags[id(c)] = note
+            elif suggest.looks_multi_location(c.description):
+                flags[id(c)] = "touches more than one place"
         listing = "\n".join(
             f"    {n}. {c.description}  ({c.file})"
-            + ("  ⚠ touches more than one place"
-               if suggest.looks_multi_location(c.description) else "")
+            + (f"  ⚠ {flags[id(c)]}" if id(c) in flags else "")
             for n, c in enumerate(candidates, 1))
         # The buttons say "1".."6", which is nothing — so each one carries
         # the whole candidate under the pointer.
         buttons = [(str(n), self._picker(action_id, n - 1), n == 1,
-                    f"{c.file}\n\n{c.description}")
+                    f"{c.file}\n\n{c.description}"
+                    + (f"\n\n⚠ {flags[id(c)]}" if id(c) in flags else ""))
                    for n, c in enumerate(candidates, 1)]
         buttons.append(("None of these", lambda: self._drop_menu(action_id),
                         False))
@@ -1817,7 +1827,9 @@ class ChatLabApp:
                 reply = client.chat(
                     target.model,
                     [{"role": "user", "content": intent.build_change_prompt(
-                        change, current, instructions)}],
+                        change, current, instructions,
+                        evidence=suggest.existing_evidence(
+                            change, self.project_texts))}],
                     options={**self._options(edit_tools.MIN_EDIT_TOKENS * 2),
                              "temperature": 0.1},
                     think=think_value(target.model, False),
@@ -1947,9 +1959,73 @@ class ChatLabApp:
                      ("Keep them", lambda: self.chat.resolve_action(
                          undo_id, "✓ Changes kept."), True)],
                     action_id=undo_id)
+                self._test_after_apply(snapshot)
         if always:
             self.chat.add_note(
                 "✏ Applied without asking, as you chose earlier in this chat.")
+
+    def _test_after_apply(self, stamp: str) -> None:
+        """Run the project's own tests against what was just written.
+
+        Green is proof no diff can give.  Red rolls the apply back to the
+        snapshot it just made and shows the failure — the edit that reached
+        this user's disk broken passed every static gate on the way, and
+        running the code is the only judge that cannot be fooled by a
+        plausible-looking diff.
+        """
+        if not self.settings.get("test_after_apply", True):
+            return
+        runner = testrun.find_runner(self.project)
+        if runner is None:
+            self.chat.add_note(
+                "🧪 No tests found to run for this project — the change "
+                "stands on the diff review alone.")
+            return
+        self.chat.add_note(
+            f"🧪 Running {runner.label} against what was just written…")
+        project = self.project
+        timeout_s = int(self.settings.get("test_timeout", 180) or 180)
+
+        def work():
+            outcome = testrun.run(project, runner, timeout_s=timeout_s,
+                                  cancel=self.cancel)
+            self.events.put(("tests_done", {"outcome": outcome,
+                                            "stamp": stamp}))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _tests_done(self, outcome, stamp: str) -> None:
+        """The verdict, and the rollback when it is red (main thread)."""
+        if not outcome.ran:
+            self.chat.add_note(f"🧪 {outcome.summary()}.")
+            return
+        if outcome.ok:
+            self.chat.add_note(f"✅ {outcome.summary()} — the change holds.")
+            self.set_status(f"Tests passed ({outcome.seconds:.0f}s)")
+            return
+        results = edit_tools.restore(self.project, stamp)
+        restored = all(r.ok for r in results) and bool(results)
+        for result in results:
+            if not result.ok:
+                continue
+            target = edit_tools.resolve(self.project, result.name)
+            if target is not None and target.is_file():
+                try:
+                    self.project_texts[result.name] = target.read_text(
+                        encoding="utf-8", errors="replace")
+                except OSError:
+                    pass
+        tail = "\n".join(outcome.tail.splitlines()[-12:])
+        self.chat.add_note(
+            f"❌ {outcome.summary()} — "
+            + (f"the change was rolled back automatically; every file is "
+               f"exactly as it was before the apply."
+               if restored else
+               f"and the automatic rollback ALSO failed — restore snapshot "
+               f"{stamp} from the backups folder by hand.")
+            + f"\n\nWhat the tests said:\n{tail}")
+        self.set_status("Tests failed — change rolled back"
+                        if restored else "Tests failed — MANUAL RESTORE NEEDED")
 
     def _undo_edits(self, stamp: str, action_id: str) -> None:
         results = edit_tools.restore(self.project, stamp)
@@ -3705,6 +3781,8 @@ class ChatLabApp:
             self.chat.add_assistant(
                 f"{payload['target'].short} · research report",
                 payload["text"])
+        elif kind == "tests_done":
+            self._tests_done(payload["outcome"], payload["stamp"])
         elif kind == "menu_ready":
             # Routed through the ordinary check so the menu parse, the
             # verification and the trace all run exactly as they would for

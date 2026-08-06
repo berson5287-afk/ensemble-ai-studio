@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from aichatlab import editdebug
+from aichatlab import editdebug, edits
 from aichatlab import intent as intent_module
 
 tk = pytest.importorskip("tkinter")
@@ -3725,3 +3725,87 @@ def test_the_hint_clears_outside_critique(app):
     app._update_chain_hint()
 
     assert app.chain_hint.cget("text") == ""
+
+
+# -- tests run after an apply, and red rolls it back ------------------------
+def _tested_project(app, tmp_path):
+    """A real tiny project whose self-test fails if engine.py is broken."""
+    (tmp_path / "engine.py").write_text(
+        "def tally(rows):\n    return len(rows)\n", encoding="utf-8")
+    (tmp_path / "selftest.py").write_text(
+        "from engine import tally\n"
+        "assert tally([1, 2]) == 2, 'tally broke'\n"
+        "print('selftest ok')\n", encoding="utf-8")
+    app.project = tmp_path
+    app.project_texts = {
+        "engine.py": (tmp_path / "engine.py").read_text(encoding="utf-8")}
+
+
+def _wait_tests_done(app, seconds=30):
+    import time as _t
+    deadline = _t.time() + seconds
+    while _t.time() < deadline:
+        _drain(app)
+        t = app.chat.transcript()
+        # The apply note itself contains a ✅ ("Wrote 1 file"), so the wait
+        # keys on the runner's own phrasings, not on the emoji.
+        if ("the change holds" in t or "What the tests said" in t
+                or "No tests found" in t or "no tests were run" in t):
+            return
+        _t.sleep(0.3)
+
+
+def test_a_green_suite_keeps_the_change_and_says_so(app, tmp_path):
+    _tested_project(app, tmp_path)
+    good = edits.Edit("engine.py",
+                      "def tally(rows):\n    return len(rows or [])\n")
+
+    app._apply_edits([good], always=False)
+    _wait_tests_done(app)
+
+    transcript = app.chat.transcript()
+    assert "the change holds" in transcript and "passed" in transcript
+    assert "len(rows or [])" in (tmp_path / "engine.py").read_text(
+        encoding="utf-8"), "green means the change stays"
+
+
+def test_a_red_suite_rolls_the_apply_back(app, tmp_path):
+    """The whole point: running the code is the judge a diff cannot fool."""
+    _tested_project(app, tmp_path)
+    before = (tmp_path / "engine.py").read_text(encoding="utf-8")
+    bad = edits.Edit("engine.py",
+                     "def tally(rows):\n    return 7\n")   # parses fine
+
+    app._apply_edits([bad], always=False)
+    _wait_tests_done(app)
+
+    transcript = app.chat.transcript()
+    assert "❌" in transcript and "rolled back" in transcript
+    assert "tally broke" in transcript, "the failure itself is shown"
+    assert (tmp_path / "engine.py").read_text(
+        encoding="utf-8") == before, "the file is exactly as it was"
+    assert app.project_texts["engine.py"] == before
+
+
+def test_a_project_with_no_tests_says_so_honestly(app, tmp_path):
+    (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    app.project = tmp_path
+    app.project_texts = {"engine.py": "x = 1\n"}
+
+    app._apply_edits([edits.Edit("engine.py", "x = 2\n")], always=False)
+    _wait_tests_done(app)
+
+    assert "No tests found" in app.chat.transcript()
+    assert (tmp_path / "engine.py").read_text(encoding="utf-8") == "x = 2\n"
+
+
+def test_the_runner_can_be_switched_off(app, tmp_path):
+    _tested_project(app, tmp_path)
+    app.settings["test_after_apply"] = False
+
+    app._apply_edits([edits.Edit("engine.py", "def tally(rows):\n"
+                                              "    return 7\n")],
+                     always=False)
+    _wait_tests_done(app, seconds=3)
+
+    assert "🧪" not in app.chat.transcript()
