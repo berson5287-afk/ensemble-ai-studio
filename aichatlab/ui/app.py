@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .. import __version__, gpu, intent, projectindex, projectmemory, recovery
 from .. import edits as edit_tools
-from .. import bridge, editdebug, suggest, testrun, validate
+from .. import bridge, codetree, editdebug, suggest, testrun, validate
 from ..activity import (
     BIG_PROMPT_TOKENS,
     Tracker,
@@ -1823,11 +1823,33 @@ class ChatLabApp:
             self.events.put(("note", {
                 "text": f"✏ ({index}/{len(changes)}) {change.summary}",
                 "note_id": "realise"}))
+            # A file bigger than the window was uneditable by every path —
+            # nothing could carry it, and Ollama answers an overfull prompt
+            # by throwing away its front.  The tree knows where the target
+            # function lives, so the request carries that region instead.
+            excerpt_of, file_tree = None, ""
+            if estimate_tokens(current) > codetree.FITS_WHOLE_TOKENS:
+                total = current.count("\n") + 1
+                named = suggest.NAMES_FUNCTION.search(change.description or "")
+                found = (codetree.region(current, named.group(1))
+                         if named else None) or codetree.region_by_terms(
+                             current, suggest.claim_terms(change.description))
+                if found:
+                    excerpt, first, last = found
+                    excerpt_of = (first, last, total)
+                    file_tree = codetree.render(
+                        codetree.tree(current), change.file, total)
+                    current = excerpt
+                    self.events.put(("note", {
+                        "text": f"🌳 {change.file} is too big to send whole "
+                                f"— sending lines {first}–{last}, where the "
+                                f"change lives."}))
             try:
                 reply = client.chat(
                     target.model,
                     [{"role": "user", "content": intent.build_change_prompt(
                         change, current, instructions,
+                        excerpt_of=excerpt_of, file_tree=file_tree,
                         evidence=suggest.existing_evidence(
                             change, self.project_texts))}],
                     options={**self._options(edit_tools.MIN_EDIT_TOKENS * 2),

@@ -199,7 +199,8 @@ def describe(changes) -> str:
 
 
 def build_change_prompt(change: Change, current: str, instructions: str,
-                        evidence: str = "") -> str:
+                        evidence: str = "", excerpt_of=None,
+                        file_tree: str = "") -> str:
     """Ask for one change, on one file, with nothing else wanted.
 
     Everything here is aimed at the failure this exists to fix.  The file is
@@ -225,14 +226,37 @@ def build_change_prompt(change: Change, current: str, instructions: str,
             f"reply with the single word NOCHANGE. Do not restate an "
             f"existing protection in new words; that is not a change, and "
             f"it will be refused.\n\n")
+    if excerpt_of:
+        # The wall this breaks: a file bigger than the context window was
+        # uneditable by every path, because nothing could carry it.  A
+        # function fits where a file cannot, and the anchors still match
+        # because the excerpt is the file's own text, verbatim.
+        first, last, total = excerpt_of
+        orientation = (f"The whole file's structure, for orientation:\n"
+                       f"{file_tree}\n\n") if file_tree else ""
+        contents = (
+            f"{change.file} is {total} lines — too large to send whole. "
+            f"{orientation}"
+            f"Here are lines {first}–{last}, verbatim: the part you were "
+            f"asked to change, with its surroundings. Your FIND lines must "
+            f"be copied exactly from this excerpt — character for "
+            f"character, including indentation and blank lines — and your "
+            f"whole change must land inside it.\n\n"
+            f"--- {change.file} (lines {first}–{last}) ---\n{current}\n"
+            f"--- end of excerpt ---\n\n")
+    else:
+        contents = (
+            f"Here is the current, complete contents of {change.file}. The "
+            f"lines you quote must be copied from it exactly — character "
+            f"for character, including indentation and blank lines. Do not "
+            f"retype them from memory and do not tidy them up on the way "
+            f"past.\n\n"
+            f"--- {change.file} ---\n{current}\n--- end of "
+            f"{change.file} ---\n\n")
     return (
         f"You already looked at this project and said you would make this "
         f"change:\n\n    {change.description}\n\n{already}"
-        f"Here is the current, complete contents of {change.file}. The lines "
-        f"you quote must be copied from it exactly — character for "
-        f"character, including indentation and blank lines. Do not retype "
-        f"them from memory and do not tidy them up on the way past.\n\n"
-        f"--- {change.file} ---\n{current}\n--- end of {change.file} ---\n\n"
+        f"{contents}"
         f"Make exactly that one change to {change.file}, and nothing else.\n\n"
         f"The REPLACE section must differ from the FIND section. Copying the "
         f"lines back unaltered is not an edit — it is refused, and it wastes "
