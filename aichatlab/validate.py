@@ -267,7 +267,7 @@ def _unreachable_in(tree) -> list[Problem]:
             for first, second in zip(block, block[1:]):
                 if not _terminates(first):
                     continue
-                where = getattr(first, "__class__").__name__.lower()
+                where = first.__class__.__name__.lower()
                 found.append(Problem(
                     "unreachable",
                     f"this line can never run — it comes straight after a "

@@ -10,9 +10,22 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from .. import __version__, gpu, intent, projectindex, projectmemory, recovery
+from .. import (
+    __version__,
+    bridge,
+    codetree,
+    editdebug,
+    gpu,
+    intent,
+    projectindex,
+    projectmemory,
+    recovery,
+    sandbox,
+    suggest,
+    testrun,
+    validate,
+)
 from .. import edits as edit_tools
-from .. import bridge, codetree, editdebug, sandbox, suggest, testrun, validate
 from ..activity import (
     BIG_PROMPT_TOKENS,
     Tracker,
@@ -62,8 +75,8 @@ from ..research import (
     wants_web_search,
 )
 from ..retrieval import Chunk, describe_selection
-from ..retrieval import worth_retrieving as retrieval_worth
 from ..retrieval import select as select_chunks
+from ..retrieval import worth_retrieving as retrieval_worth
 from ..runlog import RunLog
 from ..session import (
     DENSE_CHARS_PER_TOKEN,
@@ -950,7 +963,7 @@ class ChatLabApp:
                     "models: first drafts, second reviews, third (optional) "
                     "rewrites.\n\nUncheck everything so you can pick the "
                     "roles in order?"):
-                for key, var in self.model_vars.items():
+                for var in self.model_vars.values():
                     var.set(False)
                 self.model_tick_order = []
                 self._update_context_label()
@@ -2053,8 +2066,8 @@ class ChatLabApp:
         tail = "\n".join(outcome.tail.splitlines()[-12:])
         self.chat.add_note(
             f"❌ {outcome.summary()} — "
-            + (f"the change was rolled back automatically; every file is "
-               f"exactly as it was before the apply."
+            + ("the change was rolled back automatically; every file is "
+               "exactly as it was before the apply."
                if restored else
                f"and the automatic rollback ALSO failed — restore snapshot "
                f"{stamp} from the backups folder by hand.")
@@ -2695,7 +2708,7 @@ class ChatLabApp:
                 return True
             # The family name alone — "qwen", "gemma", "llama" — is how
             # people actually type it mid-sentence.
-            family = re.split(r"[\d:._-]", base, 1)[0]
+            family = re.split(r"[\d:._-]", base, maxsplit=1)[0]
             if len(family) >= 4 and family in said:
                 return True
         return False

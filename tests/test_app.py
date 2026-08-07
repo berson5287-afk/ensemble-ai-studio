@@ -1085,7 +1085,6 @@ def test_a_plan_step_ticks_from_the_orchestrators_event(app):
 
 def test_a_big_prompt_warns_before_the_silence_starts(app):
     from aichatlab.orchestrator import Target
-
     from aichatlab.session import estimate_tokens
 
     prompt = "x" * 100_000
@@ -1655,7 +1654,7 @@ BIG = ("The loader rebuilds the symbol table on every open, which is where "
 
 def test_auto_mode_continues_without_asking(app):
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     target = _target("alpha:1b")
 
     handled = app._auto_continue(target, _Cut(BIG))
@@ -1670,7 +1669,7 @@ def test_the_continuation_waits_for_the_worker_to_finish(app):
     """`_continue_reply` refuses to start on top of a running worker, so
     firing it from turn_end would silently do nothing."""
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
 
     app._auto_continue(_target("alpha:1b"), _Cut(BIG))
 
@@ -1688,7 +1687,7 @@ def test_auto_mode_stops_and_says_why(app):
 
     app.auto_var.set(True)
     app.auto.limits = Limits(continues=1)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     app._auto_continue(_target("alpha:1b"), _Cut(BIG))
     app.pending_auto = None
 
@@ -1701,7 +1700,7 @@ def test_auto_mode_stops_and_says_why(app):
 def test_pressing_stop_ends_the_overnight_run(app):
     """Stop during an unattended run means stop, not pause."""
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     app.pending_auto = _target("alpha:1b")
     import threading as _threading
     import time as _time
@@ -1720,7 +1719,7 @@ def test_auto_mode_answers_the_carry_prompt_itself(app):
     from aichatlab.session import make_key
 
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     _seed(app, ("local", "qwen2.5-coder:32b"))
     target = _target("qwen3:8b")
 
@@ -1735,7 +1734,7 @@ def test_auto_mode_answers_the_carry_prompt_itself(app):
 
 def test_auto_mode_answers_the_search_prompt_itself(app):
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     app.research_var.set(False)
     app.settings["searxng_url"] = "http://searx.local"
 
@@ -1749,7 +1748,7 @@ def test_auto_mode_answers_the_search_prompt_itself(app):
 
 def test_without_searxng_it_answers_from_memory_rather_than_waiting(app):
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     app.research_var.set(False)
     app.settings["searxng_url"] = ""
 
@@ -1763,7 +1762,7 @@ def test_without_searxng_it_answers_from_memory_rather_than_waiting(app):
 
 def test_switching_auto_off_reports_what_it_did(app):
     app.auto_var.set(True)
-    app.auto.begin(0.0)
+    app.auto.begin(time.monotonic())
     app.auto.note("carried a conversation across")
     app.auto_var.set(False)
 

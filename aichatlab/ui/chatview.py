@@ -16,7 +16,6 @@ from ..formatting import has_markdown, render_markdown, tidy
 from ..thinking import human_duration
 from .theme import (
     ACCENT,
-    Tooltip,
     ACCENT_DARK,
     BOT_BG,
     BOT_FG,
@@ -35,6 +34,7 @@ from .theme import (
     SELECTION,
     USER_BG,
     USER_FG,
+    Tooltip,
     flat_button,
 )
 

@@ -1193,6 +1193,11 @@ def find_file(root, name: str, known=None) -> tuple[str, str]:
     file are refused with the reason, and the retry hands the real file
     back.
     """
+    # Normalised at the door, so a Windows-style `udbg\\config.py` resolves
+    # to the same answer on every platform.  On Windows the raw name would
+    # *work* and come back unnormalised; on Linux it is one strange filename
+    # that exists nowhere — same model output, two different behaviours.
+    name = (name or "").replace("\\", "/")
     preferred = [str(c).replace("\\", "/") for c in known] if known else []
 
     def exists(candidate: str) -> bool:

@@ -214,7 +214,6 @@ class Bridge:
 
 # -- the commands ----------------------------------------------------------
 def _state(app, _args) -> dict:
-    from . import edits as edit_tools
 
     return {
         "project": str(app.project) if app.project else "",

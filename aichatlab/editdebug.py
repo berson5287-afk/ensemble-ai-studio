@@ -181,7 +181,9 @@ class Trace:
             self.flaws.append({
                 "name": name,
                 "line": getattr(item, "line", 0),
-                "problem": getattr(item, "describe", lambda: str(item))()})
+                "problem": (item.describe()
+                            if hasattr(item, "describe")
+                            else str(item))})
         return self
 
     def refused(self, items) -> Trace:

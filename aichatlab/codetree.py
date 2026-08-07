@@ -98,7 +98,7 @@ def _fallback_tree(text: str) -> list[Node]:
             for m in DEF_LINE.finditer(text)]
     nodes: list[Node] = []
     positions = [text[:offset].count("\n") + 1 for offset, _i, _n in hits]
-    for index, (offset, indent, name) in enumerate(hits):
+    for index, (_offset, indent, name) in enumerate(hits):
         start = positions[index]
         end = len(lines)
         for later in range(index + 1, len(hits)):
