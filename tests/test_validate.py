@@ -8,6 +8,10 @@ as a silence test.
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from aichatlab import validate
 
 
@@ -170,6 +174,11 @@ def test_a_star_import_switches_the_check_off():
     assert flags(src) == []
 
 
+@pytest.mark.skipif(sys.version_info < (3, 10),
+                    reason="match statements do not parse before 3.10 — and "
+                           "on 3.9 reporting them as a syntax error is the "
+                           "truthful answer, since the interpreter running "
+                           "the app cannot import such a file either")
 def test_a_match_statement_switches_the_check_off():
     src = """\
 def f(x):
