@@ -17,6 +17,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+body { height: 100dvh; }
 body {
   background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -34,10 +35,10 @@ header a { color: var(--accent); text-decoration: none; font-size: 13px; }
   font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
   color: var(--muted); background: var(--panel-2); white-space: nowrap;
 }
-main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; min-width: 0; }
 aside {
   border-right: 1px solid var(--line); background: var(--panel); padding: 16px;
-  overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
+  overflow-y: auto; display: flex; flex-direction: column; gap: 18px; min-height: 0;
 }
 aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 8px; }
 .models label {
@@ -68,8 +69,15 @@ button.ghost {
 }
 button.ghost:hover { color: var(--text); }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
-#transcript { overflow-y: auto; padding: 22px 26px; display: flex; flex-direction: column; gap: 14px; }
+/* Every level of a nested grid needs min-height: 0, or a long transcript
+   grows the panel past the viewport and the body clips it — no scrollbar,
+   composer pushed off-screen. */
+section.chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; min-width: 0; }
+#transcript { overflow-y: auto; overflow-x: hidden; min-height: 0; min-width: 0; padding: 22px 26px; display: flex; flex-direction: column; gap: 14px; }
+/* Flex children with overflow: hidden have a min-height of 0 and shrink to fit
+   the column, so every card got squashed to a slice and nothing overflowed —
+   and nothing overflowing means no scrollbar.  Cards keep their natural height. */
+#transcript > * { flex: 0 0 auto; }
 .empty { margin: auto; max-width: 560px; text-align: center; color: var(--muted); }
 .empty h3 { color: var(--text); font-weight: 600; margin-bottom: 6px; }
 .empty .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left; margin-top: 18px; }
@@ -77,10 +85,10 @@ section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
 .empty .modes b { color: var(--text); display: block; }
 .user {
   align-self: flex-end; max-width: 72%; background: var(--user); border-radius: var(--radius);
-  padding: 10px 14px; white-space: pre-wrap;
+  padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .user .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; min-width: 0; }
 .card .head { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
 .badge {
   width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
@@ -90,7 +98,7 @@ section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
 .card .status { margin-left: auto; font-size: 12px; color: var(--muted); }
 .card .status.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
-.card .body { padding: 12px 16px; }
+.card .body { padding: 12px 16px; overflow-wrap: anywhere; }
 .card .body :is(p, ul, ol, pre) { margin: 0 0 10px; }
 .card .body :is(p, ul, ol, pre):last-child { margin-bottom: 0; }
 .card .body pre { background: var(--panel-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
@@ -111,7 +119,7 @@ section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
 .plan li.running::before { content: "◔ "; color: var(--warn); }
 .plan li.done::before { content: "● "; color: var(--ok); }
 .plan li.failed::before, .plan li.skipped::before { content: "✕ "; color: var(--bad); }
-.composer { border-top: 1px solid var(--line); background: var(--panel); padding: 14px 26px; display: grid; gap: 8px; }
+.composer { border-top: 1px solid var(--line); background: var(--panel); padding: 14px 26px; display: grid; gap: 8px; min-width: 0; }
 .composer .row textarea { min-height: 54px; }
 .composer .row { align-items: stretch; }
 .composer .row textarea { flex: 1; }
@@ -130,8 +138,8 @@ section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
 .gate.on { display: grid; }
 .gate form { background: var(--panel); border: 1px solid var(--line); padding: 22px; border-radius: 12px; width: 320px; display: grid; gap: 10px; }
 @media (max-width: 860px) {
-  main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  main { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 38vh; gap: 12px; }
   #transcript { padding: 16px; }
   .user { max-width: 92%; }
   header .sub { display: none; }
