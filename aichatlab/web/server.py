@@ -257,7 +257,7 @@ def create_app(clients: dict[str, Any] | None = None,
     def index() -> FileResponse:
         return FileResponse(STATIC / "index.html")
 
-    @app.get("/healthz")
+    @app.get("/api/health")
     def health() -> dict:
         return {"ok": True, "version": __version__}
 

@@ -46,7 +46,7 @@ jobs:
         run: |
           docker run -d --name eas -p 8080:8080 -e GEMINI_API_KEY=ci-placeholder ensemble-ai-studio:ci
           for i in $(seq 1 20); do
-            if curl -fsS http://localhost:8080/healthz; then echo; exit 0; fi
+            if curl -fsS http://localhost:8080/api/health; then echo; exit 0; fi
             sleep 1
           done
           docker logs eas; exit 1

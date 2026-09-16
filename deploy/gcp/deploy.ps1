@@ -69,6 +69,16 @@ gcloud projects add-iam-policy-binding $Project `
   --member "serviceAccount:$serviceAccount" --role "roles/aiplatform.user" `
   --condition=None --quiet | Out-Null
 
+# Cloud Build runs `--source` builds as the Compute Engine default service
+# account, and projects created since 2024 no longer hand that account the
+# Editor role.  Without this it cannot even read the uploaded source.
+$projectNumber = gcloud projects describe $Project --format "value(projectNumber)"
+$buildAccount = "$projectNumber-compute@developer.gserviceaccount.com"
+Step "Letting Cloud Build's account ($buildAccount) build and push images"
+gcloud projects add-iam-policy-binding $Project `
+  --member "serviceAccount:$buildAccount" --role "roles/cloudbuild.builds.builder" `
+  --condition=None --quiet | Out-Null
+
 $envVars = @(
   "GOOGLE_CLOUD_PROJECT=$Project",
   "GOOGLE_CLOUD_LOCATION=global",
@@ -90,8 +100,9 @@ gcloud run deploy $Service `
   --set-env-vars ("^|^" + ($envVars -join "|")) `
   --labels app=ensemble-ai-studio `
   --quiet
+if ($LASTEXITCODE -ne 0) { throw "Deploy failed (see the gcloud output above)." }
 
 $url = gcloud run services describe $Service --region $Region --format "value(status.url)"
 Step "Live: $url"
-Write-Host "Health: $url/healthz"
+Write-Host "Health: $url/api/health"
 if ($Private) { Write-Host "Private: grant viewers roles/run.invoker, open with an authenticated proxy." }

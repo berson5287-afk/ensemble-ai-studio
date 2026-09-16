@@ -128,22 +128,34 @@ class GeminiClient:
                          else f"vertex://{self.project}/{self.location}")
         self.server_version = "gemini"
         self._client = client
+        self._client_lock = threading.Lock()
 
     # -- SDK ---------------------------------------------------------------
     def _sdk(self) -> Any:
-        """The google-genai client, built on first use so imports stay cheap."""
-        if self._client is None:
-            from google import genai  # imported here: optional dependency
+        """The google-genai client, built once on first use.
 
-            if self.api_key:
-                self._client = genai.Client(api_key=self.api_key)
-            else:
-                if not self.project:
-                    raise OllamaError(
-                        "No Google Cloud project configured. Set "
-                        "GOOGLE_CLOUD_PROJECT (Vertex AI) or GEMINI_API_KEY.")
-                self._client = genai.Client(
-                    vertexai=True, project=self.project, location=self.location)
+        Built under a lock, because a broadcast is the first thing a fresh
+        instance does: four threads arrive here together, each builds a
+        client, one assignment wins, and the losers are garbage-collected
+        mid-stream — the SDK closes its HTTP client on the way out, and the
+        three streams still using it fail with "client has been closed".
+        """
+        if self._client is not None:
+            return self._client
+        with self._client_lock:
+            if self._client is None:
+                from google import genai  # imported here: optional dependency
+
+                if self.api_key:
+                    self._client = genai.Client(api_key=self.api_key)
+                else:
+                    if not self.project:
+                        raise OllamaError(
+                            "No Google Cloud project configured. Set "
+                            "GOOGLE_CLOUD_PROJECT (Vertex AI) or GEMINI_API_KEY.")
+                    self._client = genai.Client(
+                        vertexai=True, project=self.project,
+                        location=self.location)
         return self._client
 
     # -- discovery (the shape the app expects) -----------------------------

@@ -37,7 +37,7 @@ def run(client, **overrides):
 
 def test_index_and_health(rig):
     client, _fake = rig
-    assert client.get("/healthz").json()["ok"] is True
+    assert client.get("/api/health").json()["ok"] is True
     page = client.get("/")
     assert page.status_code == 200
     assert "Ensemble AI Studio" in page.text

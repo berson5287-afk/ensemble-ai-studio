@@ -37,6 +37,13 @@ gcloud projects add-iam-policy-binding "$PROJECT" \
   --member "serviceAccount:$SA" --role roles/aiplatform.user \
   --condition=None --quiet >/dev/null
 
+# Cloud Build runs --source builds as the Compute Engine default account,
+# which newer projects no longer grant Editor.  Give it just the builder role.
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
+BUILD_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+step "Letting Cloud Build's account ($BUILD_SA) build and push images"
+gcloud projects add-iam-policy-binding "$PROJECT"   --member "serviceAccount:$BUILD_SA" --role roles/cloudbuild.builds.builder   --condition=None --quiet >/dev/null
+
 ENV="GOOGLE_CLOUD_PROJECT=${PROJECT}|GOOGLE_CLOUD_LOCATION=global|GEMINI_MODELS=${MODELS}"
 [[ -n "${DEMO_PASSPHRASE:-}" ]] && ENV="${ENV}|DEMO_PASSPHRASE=${DEMO_PASSPHRASE}"
 AUTH="--allow-unauthenticated"

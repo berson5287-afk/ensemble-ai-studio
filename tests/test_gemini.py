@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -216,3 +217,32 @@ def test_orchestrator_drives_gemini_like_any_other_client():
     assert [r.text for r in results] == ["reply"]
     assert [k for k, _ in events] == ["turn_start", "token", "turn_end"]
     assert sdk.calls[0]["config"]["max_output_tokens"] == 2048
+
+
+def test_sdk_client_is_built_exactly_once_under_concurrency(monkeypatch):
+    """A broadcast hits `_sdk` from several threads at once; one client must win."""
+    import sys
+    import types
+
+    built = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            time.sleep(0.02)                 # widen the window for the race
+            built.append(self)
+
+    fake_genai = types.SimpleNamespace(Client=Client)
+    monkeypatch.setitem(sys.modules, "google", types.SimpleNamespace(genai=fake_genai))
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+
+    gemini = GeminiClient(["m"], project="p")
+    seen = []
+    workers = [threading.Thread(target=lambda: seen.append(gemini._sdk()))
+               for _ in range(8)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    assert len(built) == 1
+    assert all(s is built[0] for s in seen)
