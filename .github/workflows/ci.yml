@@ -27,6 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt || pip install requests pypdf openpyxl
+          pip install -r requirements-web.txt httpx
           pip install pytest ruff
 
       - name: Lint
@@ -34,3 +35,18 @@ jobs:
 
       - name: Test
         run: xvfb-run -a pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the hosted-edition image
+        run: docker build -t ensemble-ai-studio:ci .
+      - name: Boot it and hit the health check
+        run: |
+          docker run -d --name eas -p 8080:8080 -e GEMINI_API_KEY=ci-placeholder ensemble-ai-studio:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8080/healthz; then echo; exit 0; fi
+            sleep 1
+          done
+          docker logs eas; exit 1

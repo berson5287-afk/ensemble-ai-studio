@@ -10,6 +10,11 @@ same question and see which one is actually worth using.
 Built on [Ollama](https://ollama.com), it pools models from **your own machine
 and a networked box** into one interface.
 
+> **Hosted edition:** the same orchestration engine runs on **Google Cloud Run**
+> with **Gemini on Vertex AI** standing in for the local GPUs — see
+> [Running on Google Cloud](#running-on-google-cloud). The live demo link is in
+> the repository description.
+
 ![AI Chat Lab in action](docs/demo.gif)
 
 ---
@@ -527,6 +532,29 @@ python run.py          # both model columns will populate
 
 ---
 
+## Running on Google Cloud
+
+The desktop app is a window over a UI-free core. That core also runs as a web
+service: `aichatlab/web/` serves a browser front end, and
+`aichatlab/gemini.py` is a drop-in replacement for the Ollama client that talks
+to Gemini through Vertex AI. Deployed on Cloud Run it scales to zero, holds no
+API keys (the service runs as a least-privilege service account), and streams
+every reply exactly as the desktop app does.
+
+```powershell
+gcloud auth login
+.\deploy\gcp\deploy.ps1 -Project <project-id>      # or deploy/gcp/deploy.sh
+```
+
+Six of the seven modes are available in the browser — chat, plan & work,
+conversation, debate, critique chain and judge panel. Research mode needs a
+SearXNG instance and stays on the desktop.
+
+The architecture, the guards on the public URL, the cost model and the reasons
+behind each choice are in [docs/cloud-run.md](docs/cloud-run.md).
+
+---
+
 ## Architecture
 
 The Tkinter front-end is a thin shell over a UI-free core, which is what makes
@@ -557,6 +585,10 @@ aichatlab/
   knowledge.py     lesson extraction, storage and keyword recall
   benchmark.py     timed runs, aggregation, CSV export
   config.py        settings persistence
+  gemini.py        the same client shape as client.py, backed by Vertex AI Gemini
+  web/
+    server.py        FastAPI: one streaming endpoint per run, the orchestrator's events as NDJSON
+    static/index.html  the browser front end, no build step
   ui/
     app.py             main window, event pump
     chatview.py        streaming transcript widget
@@ -567,6 +599,8 @@ aichatlab/
     runlog_window.py   what ran, how long it took, and why it stopped
     edit_review.py     the diffs, per-file consent, and Apply all
     edit_debug_window.py  why a reply produced no diff to approve
+deploy/gcp/        Cloud Run deployment, idempotent, least-privilege service account
+Dockerfile         the hosted edition's image: slim, non-root, no secrets
 tools/
   edit_trace.py    read the edit-check trace from outside the app
   edit_bench.py    ask a real model for a real edit and score whether it applies

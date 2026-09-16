@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ensemble AI Studio</title>
+<meta name="description" content="Multi-model orchestration on Google Cloud: broadcast, debate, critique chain, judge panel and open conversation across Gemini models, streamed live.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #161a23; --panel-2: #1c2130; --line: #262c3b;
+  --text: #e6e8ee; --muted: #8b93a7; --accent: #7aa2ff; --accent-2: #b48cff;
+  --ok: #5fd39a; --warn: #ffb562; --bad: #ff7b7b; --user: #243049;
+  --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: grid; grid-template-rows: auto 1fr; overflow: hidden;
+}
+header {
+  display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+header .sub { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+header a { color: var(--accent); text-decoration: none; font-size: 13px; }
+.pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: var(--panel-2); white-space: nowrap;
+}
+main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+aside {
+  border-right: 1px solid var(--line); background: var(--panel); padding: 16px;
+  overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
+}
+aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 8px; }
+.models label {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px;
+  cursor: pointer; border: 1px solid transparent;
+}
+.models label:hover { background: var(--panel-2); }
+.models label.on { background: var(--panel-2); border-color: var(--line); }
+.models input { accent-color: var(--accent); }
+.models .name { flex: 1; }
+.models .tag { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+select, textarea, input[type=text], input[type=number], input[type=password] {
+  width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font: inherit;
+}
+textarea { resize: vertical; }
+.hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button {
+  flex: 1; background: transparent; color: var(--muted); border: 0; padding: 7px 0; cursor: pointer; font: inherit; font-size: 13px;
+}
+.seg button.on { background: var(--panel-2); color: var(--text); }
+button.ghost {
+  background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 10px; cursor: pointer; font: inherit; font-size: 13px;
+}
+button.ghost:hover { color: var(--text); }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+section.chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+#transcript { overflow-y: auto; padding: 22px 26px; display: flex; flex-direction: column; gap: 14px; }
+.empty { margin: auto; max-width: 560px; text-align: center; color: var(--muted); }
+.empty h3 { color: var(--text); font-weight: 600; margin-bottom: 6px; }
+.empty .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left; margin-top: 18px; }
+.empty .modes div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+.empty .modes b { color: var(--text); display: block; }
+.user {
+  align-self: flex-end; max-width: 72%; background: var(--user); border-radius: var(--radius);
+  padding: 10px 14px; white-space: pre-wrap;
+}
+.user .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.card .head { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.badge {
+  width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #0f1117; background: var(--accent);
+}
+.card .title { font-weight: 600; font-size: 14px; }
+.card .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+.card .status.live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.card .body { padding: 12px 16px; }
+.card .body :is(p, ul, ol, pre) { margin: 0 0 10px; }
+.card .body :is(p, ul, ol, pre):last-child { margin-bottom: 0; }
+.card .body pre { background: var(--panel-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
+.card .body code { font-family: var(--mono); font-size: 13px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.card .body pre code { background: none; padding: 0; }
+.card .body table { border-collapse: collapse; }
+.card .body td, .card .body th { border: 1px solid var(--line); padding: 4px 8px; }
+.card .thoughts { margin: 0 16px 8px; }
+.card .thoughts summary { font-size: 12.5px; }
+.card .thoughts pre { white-space: pre-wrap; color: var(--muted); font-size: 12.5px; font-family: inherit; margin: 6px 0 0; }
+.card .foot { padding: 6px 14px 9px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.card.error .body { color: var(--bad); }
+.note { align-self: center; color: var(--muted); font-size: 13px; background: var(--panel); border: 1px solid var(--line); padding: 4px 12px; border-radius: 999px; }
+.plan { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px; }
+.plan h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.plan li { list-style: none; padding: 2px 0; }
+.plan li::before { content: "○ "; color: var(--muted); }
+.plan li.running::before { content: "◔ "; color: var(--warn); }
+.plan li.done::before { content: "● "; color: var(--ok); }
+.plan li.failed::before, .plan li.skipped::before { content: "✕ "; color: var(--bad); }
+.composer { border-top: 1px solid var(--line); background: var(--panel); padding: 14px 26px; display: grid; gap: 8px; }
+.composer .row textarea { min-height: 54px; }
+.composer .row { align-items: stretch; }
+.composer .row textarea { flex: 1; }
+.composer button.send {
+  flex: 0 0 auto; width: 96px; background: var(--accent); color: #0f1117; border: 0; border-radius: 8px;
+  font: inherit; font-weight: 650; cursor: pointer;
+}
+.composer button.send.stop { background: var(--bad); }
+.composer button.send:disabled { opacity: .5; cursor: default; }
+.composer .meta { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+#join { display: none; }
+#join.on { display: flex; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--bad); color: #0f1117; padding: 8px 14px; border-radius: 8px; font-weight: 600; display: none; }
+.toast.on { display: block; }
+.gate { position: fixed; inset: 0; background: rgba(15,17,23,.9); display: none; place-items: center; }
+.gate.on { display: grid; }
+.gate form { background: var(--panel); border: 1px solid var(--line); padding: 22px; border-radius: 12px; width: 320px; display: grid; gap: 10px; }
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  #transcript { padding: 16px; }
+  .user { max-width: 92%; }
+  header .sub { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎛️ Ensemble AI Studio</h1>
+  <span class="sub">Multi-model orchestration, hosted</span>
+  <span class="pill">Cloud Run</span>
+  <span class="pill">Vertex AI · Gemini</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/berson5287-afk/ensemble-ai-studio" target="_blank" rel="noopener">Source on GitHub ↗</a>
+</header>
+
+<main>
+  <aside>
+    <div>
+      <h2>Models</h2>
+      <div class="models" id="models"></div>
+      <div class="hint">Pick two or more for debate, critique and judge modes.</div>
+    </div>
+    <div>
+      <h2>Mode</h2>
+      <select id="mode"></select>
+      <div class="hint" id="modeHint"></div>
+    </div>
+    <div id="opt-rounds">
+      <h2>Rounds</h2>
+      <input type="number" id="rounds" min="1" max="3" value="2">
+    </div>
+    <div id="opt-turns">
+      <h2>Turn limit</h2>
+      <input type="number" id="turns" min="2" max="8" value="6">
+    </div>
+    <div id="opt-judge">
+      <h2>Judge</h2>
+      <select id="judge"></select>
+    </div>
+    <div>
+      <h2>Speed ↔ quality</h2>
+      <div class="seg" id="quality">
+        <button data-q="quick">Quick</button>
+        <button data-q="balanced" class="on">Balanced</button>
+        <button data-q="detailed">Detailed</button>
+      </div>
+    </div>
+    <details>
+      <summary>System prompt</summary>
+      <textarea id="system" rows="3" placeholder="Optional. Applies to every model."></textarea>
+    </details>
+    <div class="row">
+      <button class="ghost" id="reset">New conversation</button>
+    </div>
+    <div class="hint" id="about"></div>
+  </aside>
+
+  <section class="chat">
+    <div id="transcript">
+      <div class="empty" id="empty">
+        <h3>What do five models say, and where do they disagree?</h3>
+        <div>The same orchestration engine as the desktop app, with Gemini models on Vertex AI standing in for a rack of local GPUs. Every reply streams as it is written.</div>
+        <div class="modes">
+          <div><b>Chat</b> One prompt, every model, in parallel.</div>
+          <div><b>Debate</b> Rounds of argument, then a judge sums up.</div>
+          <div><b>Critique chain</b> Draft → critique → revise.</div>
+          <div><b>Judge panel</b> Blind answers, scored by a judge.</div>
+          <div><b>Conversation</b> Models talk; you can join in.</div>
+          <div><b>Plan &amp; work</b> A checklist, worked step by step.</div>
+        </div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="row">
+        <textarea id="prompt" placeholder="Ask something, or give the models a topic…"></textarea>
+        <button class="send" id="send">Send</button>
+      </div>
+      <div class="row" id="join">
+        <input type="text" id="joinText" placeholder="Join the conversation — handed to whoever speaks next">
+        <button class="ghost" id="joinSend" style="flex:0 0 auto">Say it</button>
+      </div>
+      <div class="meta">
+        <span id="count">0 chars</span>
+        <span>Enter to send · Shift+Enter for a new line</span>
+        <span id="limits"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="gate" id="gate">
+  <form id="gateForm">
+    <div>This demo is private. Enter the passphrase.</div>
+    <input type="password" id="gatePass" autocomplete="off">
+    <button class="send" style="height:36px;background:var(--accent);border:0;border-radius:8px;font-weight:650;cursor:pointer">Continue</button>
+  </form>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = {
+    session: sessionStorage.getItem("eas.session") || crypto.randomUUID(),
+    models: [], modes: [], runId: null, streams: new Map(), controller: null,
+    quality: "balanced", pass: sessionStorage.getItem("eas.pass") || "",
+  };
+  sessionStorage.setItem("eas.session", state.session);
+  marked.setOptions({ breaks: true, gfm: true });
+
+  const headers = () => {
+    const h = { "Content-Type": "application/json" };
+    if (state.pass) h["X-Passphrase"] = state.pass;
+    return h;
+  };
+  const toast = (text) => {
+    const t = $("toast"); t.textContent = text; t.classList.add("on");
+    setTimeout(() => t.classList.remove("on"), 4000);
+  };
+  const render = (md) => DOMPurify.sanitize(marked.parse(md || ""));
+  const initials = (label) => (label.replace(/[^A-Za-z]/g, "").slice(0, 2) || "AI");
+  const colour = (model) => {
+    let h = 0; for (const c of model) h = (h * 31 + c.charCodeAt(0)) % 360;
+    return `hsl(${h} 70% 70%)`;
+  };
+
+  // ---- setup ------------------------------------------------------------
+  async function load() {
+    const r = await fetch("/api/models", { headers: headers() });
+    if (r.status === 401) { $("gate").classList.add("on"); $("gatePass").focus(); return; }
+    const data = await r.json();
+    state.models = data.models; state.modes = data.modes;
+    $("models").innerHTML = data.models.map((m, i) => `
+      <label class="${i < 2 ? "on" : ""}"><input type="checkbox" value="${m.id}" ${i < 2 ? "checked" : ""}>
+      <span class="name">${m.label}</span><span class="tag">${m.id}</span></label>`).join("");
+    $("models").querySelectorAll("input").forEach((box) => box.addEventListener("change", () => {
+      box.parentElement.classList.toggle("on", box.checked); syncJudge();
+    }));
+    $("mode").innerHTML = data.modes.map((m) => `<option value="${m.id}">${m.label.split(" — ")[0]}</option>`).join("");
+    $("mode").addEventListener("change", syncMode);
+    $("limits").textContent = `${data.limits.runs_per_minute} runs/min · ${data.limits.max_models} models per run`;
+    $("about").textContent = `v${data.version} · conversations are kept in memory for an hour; nothing is stored.`;
+    syncMode(); syncJudge();
+  }
+  function selected() {
+    return [...$("models").querySelectorAll("input:checked")].map((b) => b.value);
+  }
+  function syncMode() {
+    const mode = $("mode").value;
+    const hint = state.modes.find((m) => m.id === mode);
+    $("modeHint").textContent = hint ? hint.label.split(" — ")[1] : "";
+    $("opt-rounds").style.display = mode === "debate" ? "" : "none";
+    $("opt-turns").style.display = mode === "converse" ? "" : "none";
+    $("opt-judge").style.display = (mode === "debate" || mode === "judge") ? "" : "none";
+  }
+  function syncJudge() {
+    const picked = selected();
+    const current = $("judge").value;
+    $("judge").innerHTML = `<option value="">First selected model</option>` +
+      state.models.map((m) => `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.label}${picked.includes(m.id) ? "" : " (not in panel)"}</option>`).join("");
+  }
+  $("quality").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    state.quality = b.dataset.q;
+    $("quality").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  });
+  $("gateForm").addEventListener("submit", (e) => {
+    e.preventDefault(); state.pass = $("gatePass").value; sessionStorage.setItem("eas.pass", state.pass);
+    $("gate").classList.remove("on"); load();
+  });
+  $("reset").addEventListener("click", async () => {
+    if (state.runId) await stop();
+    await fetch("/api/reset", { method: "POST", headers: headers(), body: JSON.stringify({ session: state.session }) });
+    $("transcript").innerHTML = ""; $("transcript").appendChild($("empty")); $("empty").style.display = "";
+  });
+  $("prompt").addEventListener("input", () => { $("count").textContent = `${$("prompt").value.length} chars`; });
+  $("prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); state.runId ? stop() : send(); }
+  });
+  $("send").addEventListener("click", () => state.runId ? stop() : send());
+  $("joinSend").addEventListener("click", say);
+  $("joinText").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); say(); } });
+
+  // ---- transcript -------------------------------------------------------
+  const T = $("transcript");
+  const nearBottom = () => T.scrollHeight - T.scrollTop - T.clientHeight < 80;
+  function add(el) {
+    const stick = nearBottom();
+    $("empty").style.display = "none"; T.appendChild(el);
+    if (stick) T.scrollTop = T.scrollHeight;
+    return el;
+  }
+  function el(html) { const d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; }
+  function labelFor(model) { return (state.models.find((m) => m.id === model) || { label: model }).label; }
+
+  function noteEl(text, id) {
+    const n = el(`<div class="note"></div>`); n.textContent = text; if (id) n.dataset.note = id; return n;
+  }
+
+  const handlers = {
+    run_start(ev) { state.runId = ev.run_id; },
+    note(ev) {
+      const existing = ev.note_id && T.querySelector(`[data-note="${CSS.escape(ev.note_id)}"]`);
+      if (existing) existing.textContent = ev.text; else add(noteEl(ev.text, ev.note_id));
+    },
+    note_close(ev) {
+      const existing = T.querySelector(`[data-note="${CSS.escape(ev.note_id)}"]`);
+      if (existing) existing.remove();
+    },
+    turn_start(ev) {
+      const label = labelFor(ev.target.model);
+      const card = add(el(`
+        <div class="card">
+          <div class="head"><span class="badge" style="background:${colour(ev.target.model)}">${initials(label)}</span>
+            <span class="title"></span><span class="status live">writing</span></div>
+          <details class="thoughts" style="display:none"><summary>Thinking…</summary><pre></pre></details>
+          <div class="body"></div>
+          <div class="foot" style="display:none"></div>
+        </div>`));
+      card.querySelector(".title").textContent = ev.heading || label;
+      state.streams.set(ev.stream_id, { card, text: "", thoughts: "", timer: null });
+    },
+    token(ev) {
+      const s = state.streams.get(ev.stream_id); if (!s) return;
+      s.text += ev.text;
+      if (!s.timer) s.timer = setTimeout(() => { s.timer = null; paint(s); }, 60);
+    },
+    thought(ev) {
+      const s = state.streams.get(ev.stream_id); if (!s) return;
+      s.thoughts += ev.text;
+      const d = s.card.querySelector(".thoughts"); d.style.display = "";
+      d.querySelector("pre").textContent = s.thoughts;
+      d.querySelector("summary").textContent = "Thinking…";
+    },
+    turn_end(ev) {
+      const s = state.streams.get(ev.stream_id); if (!s) return;
+      clearTimeout(s.timer); s.timer = null; paint(s);
+      const r = ev.result || {};
+      const status = s.card.querySelector(".status"); status.classList.remove("live");
+      status.textContent = r.cancelled ? "stopped" : r.truncated ? "cut off at the length cap" : "done";
+      const bits = [];
+      if (r.elapsed_s != null) bits.push(`${r.elapsed_s}s`);
+      if (r.thought_s) bits.push(`thought ${r.thought_s}s`);
+      if (r.eval_tokens) bits.push(`${r.eval_tokens} tokens`);
+      if (r.tokens_per_second) bits.push(`${r.tokens_per_second} tok/s`);
+      const foot = s.card.querySelector(".foot");
+      if (bits.length) { foot.textContent = bits.join(" · "); foot.style.display = ""; }
+      const d = s.card.querySelector(".thoughts");
+      if (s.thoughts) d.querySelector("summary").textContent = `Thought for ${r.thought_s || "a few"}s — show`;
+    },
+    turn_error(ev) {
+      const s = state.streams.get(ev.stream_id);
+      const card = s ? s.card : add(el(`<div class="card"><div class="head"><span class="title"></span></div><div class="body"></div></div>`));
+      card.classList.add("error");
+      card.querySelector(".title").textContent = ev.target ? labelFor(ev.target.model) : "Error";
+      card.querySelector(".body").textContent = ev.message;
+      const status = card.querySelector(".status"); if (status) { status.classList.remove("live"); status.textContent = "failed"; }
+    },
+    plan(ev) {
+      const p = add(el(`<div class="plan"><h4>Plan</h4><ol></ol></div>`));
+      const ol = p.querySelector("ol");
+      ev.steps.forEach((step, i) => { const li = document.createElement("li"); li.dataset.step = `step${i}`; li.textContent = step; ol.appendChild(li); });
+      const li = document.createElement("li"); li.dataset.step = "summary"; li.textContent = "Pull it together"; ol.appendChild(li);
+    },
+    check(ev) {
+      const li = T.querySelector(`.plan li[data-step="${CSS.escape(ev.key)}"]`);
+      if (li) { li.className = ev.state; }
+    },
+    report(ev) {
+      const card = add(el(`<div class="card"><div class="head"><span class="title">Report</span></div><div class="body"></div></div>`));
+      card.querySelector(".body").innerHTML = render(ev.text);
+    },
+    done(ev) { finish(ev.cancelled); },
+  };
+  function paint(s) {
+    const stick = nearBottom();
+    s.card.querySelector(".body").innerHTML = render(s.text);
+    if (stick) T.scrollTop = T.scrollHeight;
+  }
+
+  // ---- running ----------------------------------------------------------
+  async function send() {
+    const prompt = $("prompt").value.trim();
+    if (!prompt) return;
+    const models = selected();
+    if (!models.length) { toast("Pick at least one model."); return; }
+    const mode = $("mode").value;
+    const body = {
+      session: state.session, mode, models, prompt, quality: state.quality,
+      rounds: +$("rounds").value, max_turns: +$("turns").value,
+      judge: $("judge").value || null, system_prompt: $("system").value,
+    };
+    const u = add(el(`<div class="user"><div class="who"></div><div></div></div>`));
+    u.querySelector(".who").textContent = `You · ${mode}`;
+    u.lastElementChild.textContent = prompt;
+    $("prompt").value = ""; $("count").textContent = "0 chars";
+    $("send").textContent = "Stop"; $("send").classList.add("stop");
+    $("join").classList.toggle("on", mode === "converse");
+    state.controller = new AbortController();
+    try {
+      const r = await fetch("/api/run", { method: "POST", headers: headers(), body: JSON.stringify(body), signal: state.controller.signal });
+      if (!r.ok) { const err = await r.json().catch(() => ({})); toast(err.error || `Request failed (${r.status})`); finish(true); return; }
+      const reader = r.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim(); buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let ev; try { ev = JSON.parse(line); } catch { continue; }
+          (handlers[ev.kind] || (() => {}))(ev);
+        }
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") toast(`Connection dropped: ${e.message}`);
+    }
+    finish(false);
+  }
+  async function stop() {
+    if (!state.runId) return;
+    await fetch("/api/stop", { method: "POST", headers: headers(), body: JSON.stringify({ run_id: state.runId }) }).catch(() => {});
+    add(noteEl("⏹ Stopping…"));
+  }
+  async function say() {
+    const text = $("joinText").value.trim(); if (!text || !state.runId) return;
+    const r = await fetch("/api/say", { method: "POST", headers: headers(), body: JSON.stringify({ run_id: state.runId, text }) });
+    if (r.ok) { $("joinText").value = ""; const u = add(el(`<div class="user"><div class="who">You · joining in</div><div></div></div>`)); u.lastElementChild.textContent = text; }
+    else toast("That conversation has finished.");
+  }
+  function finish(cancelled) {
+    if (!state.runId && !state.controller) return;
+    state.runId = null; state.controller = null;
+    for (const s of state.streams.values()) { clearTimeout(s.timer); paint(s); const st = s.card.querySelector(".status.live"); if (st) { st.classList.remove("live"); st.textContent = cancelled ? "stopped" : "done"; } }
+    state.streams.clear();
+    $("send").textContent = "Send"; $("send").classList.remove("stop");
+    $("join").classList.remove("on");
+    $("prompt").focus();
+  }
+
+  load().catch((e) => toast(`Could not reach the server: ${e.message}`));
+})();
+</script>
+</body>
+</html>

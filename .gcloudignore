@@ -1,0 +1,18 @@
+# What `gcloud run deploy --source .` uploads to Cloud Build.
+# Keep it to what the Dockerfile needs.
+.git
+.github
+.venv
+venv
+.pytest_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.py[cod]
+tests
+tools
+docs
+*.pyw
+run.py
+*.csv
+frames
