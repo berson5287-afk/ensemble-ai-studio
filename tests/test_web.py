@@ -205,3 +205,16 @@ def test_payloads_are_json_safe():
     assert encoded["target"]["label"] == "Gemini 3.8 Flash"
     assert encoded["result"]["tokens_per_second"] == 2.0
     assert encoded["extra"]["nested"] == [1, 2]
+
+
+def test_a_judge_outside_the_panel_is_labelled_too(rig):
+    client, _fake = rig
+    fake_g = FakeClient(server="cloud")
+    fake_g.list_models = lambda timeout=15: ["gemini-3.8-flash", "gemini-3.5-flash-lite",
+                                             "gemini-3.7-flash"]
+    app = server.create_app(clients={"cloud": fake_g})
+    response = TestClient(app).post("/api/run", json={
+        "session": SESSION, "mode": "debate", "prompt": "topic", "rounds": 1,
+        "models": ["gemini-3.8-flash", "gemini-3.5-flash-lite"], "judge": "gemini-3.7-flash"})
+    headings = [e["heading"] for e in events(response) if e["kind"] == "turn_start"]
+    assert headings[-1] == "Gemini 3.7 Flash · consensus"

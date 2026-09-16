@@ -319,6 +319,8 @@ def create_app(clients: dict[str, Any] | None = None,
 
         threading.Thread(target=work, name=f"run-{run_id}", daemon=True).start()
 
+        named = targets + ([judge] if judge and judge not in targets else [])
+
         def stream() -> Iterator[bytes]:
             deadline = time.monotonic() + RUN_TIMEOUT_S
             yield encode("run_start", {"run_id": run_id, "mode": body.mode,
@@ -336,7 +338,7 @@ def create_app(clients: dict[str, Any] | None = None,
                     except queue.Empty:
                         yield b"\n"                      # keep-alive
                         continue
-                    yield encode(kind, polish(payload, targets))
+                    yield encode(kind, polish(payload, named))
                     if kind == "done":
                         break
             finally:
