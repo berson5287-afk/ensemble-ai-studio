@@ -55,6 +55,15 @@ Options:
 | `-Private` / `PRIVATE=1` | Require Google sign-in (Cloud Run IAM) instead of a public URL. |
 | `-Region` / `REGION` | Cloud Run region. Vertex calls use the `global` endpoint regardless. |
 
+## Running it in Cloud Shell (or anywhere with gcloud)
+
+```bash
+deploy/gcp/run-here.sh        # first run creates .venv and installs; then serves on :8080
+```
+
+In Cloud Shell, click **Web Preview → Preview on port 8080**. Credentials are
+the ones the shell already has; no keys, no setup.
+
 ## Running it locally
 
 ```bash
